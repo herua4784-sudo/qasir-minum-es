@@ -840,12 +840,89 @@
           }
           api.wrapped(l); return api.right(r);
         },
+        bytes: function (arr) { for (let i = 0; i < arr.length; i++) bytes.push(arr[i]); return api; },
         build: function () { return new Uint8Array(bytes); }
       };
       return api;
     }
 
-    function buildEscPosReceipt(trx, settings) {
+    // ---- Logo untuk struk RawBT: gambar diubah jadi titik hitam-putih (raster) ----
+    // RGBA -> perintah ESC/POS "GS v 0". Lebar harus kelipatan 8. Memakai dithering
+    // Floyd-Steinberg supaya logo berwarna/abu-abu tetap terbaca di printer thermal.
+    function rasterizeRGBA(data, w, h) {
+      const g = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        const a = data[i * 4 + 3] / 255;
+        g[i] = (0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]) * a + 255 * (1 - a);
+      }
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x;
+          const old = g[i];
+          const nw = old < 128 ? 0 : 255;
+          const err = old - nw;
+          g[i] = nw;
+          if (x + 1 < w) g[i + 1] += err * 7 / 16;
+          if (y + 1 < h) {
+            if (x > 0) g[i + w - 1] += err * 3 / 16;
+            g[i + w] += err * 5 / 16;
+            if (x + 1 < w) g[i + w + 1] += err * 1 / 16;
+          }
+        }
+      }
+      const rowBytes = w / 8;
+      const out = new Uint8Array(8 + rowBytes * h);
+      out.set([0x1d, 0x76, 0x30, 0x00, rowBytes & 255, rowBytes >> 8, h & 255, h >> 8], 0);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (g[y * w + x] < 128) out[8 + y * rowBytes + (x >> 3)] |= (0x80 >> (x & 7));
+        }
+      }
+      return out;
+    }
+
+    function loadLogoRaster(dataUri, maxW, maxH) {
+      return new Promise(function (resolve, reject) {
+        const img = new Image();
+        img.onload = function () {
+          try {
+            const scale = Math.min(maxW / img.width, maxH / img.height);
+            const w = Math.max(8, Math.floor((img.width * scale) / 8) * 8);
+            const h = Math.max(8, Math.round(img.height * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            resolve(rasterizeRGBA(ctx.getImageData(0, 0, w, h).data, w, h));
+          } catch (e) { reject(e); }
+        };
+        img.onerror = function () { reject(new Error('Logo tidak bisa dibaca')); };
+        img.src = dataUri;
+      });
+    }
+
+    // Hanya logo yang sudah tertanam (data:) yang bisa dicetak lewat RawBT.
+    const _logoRasterCache = {};
+    function logoRasterInfo(settings) {
+      const st = settings || {};
+      const uri = st.STORE_LOGO_URL;
+      if (!uri || String(uri).indexOf('data:') !== 0) return null;
+      const maxW = st.PAPER_SIZE === '80mm' ? 576 : 384;
+      const maxH = Math.min(160, Math.max(48, (Number(st.RECEIPT_LOGO_SIZE) || 50) * 2));
+      return { uri: uri, maxW: maxW, maxH: maxH, key: uri.length + '|' + uri.slice(-40) + '|' + maxW + 'x' + maxH };
+    }
+    // Siapkan di depan (saat pengaturan dimuat) supaya saat tombol cetak ditekan tidak
+    // ada jeda dan intent langsung terkirim di dalam sentuhan kasir.
+    function prepareLogoRaster(settings) {
+      const info = logoRasterInfo(settings);
+      if (!info || _logoRasterCache[info.key] !== undefined) return;
+      loadLogoRaster(info.uri, info.maxW, info.maxH)
+        .then(function (r) { _logoRasterCache[info.key] = r; })
+        .catch(function () { _logoRasterCache[info.key] = null; });
+    }
+
+    function buildEscPosReceipt(trx, settings, logoRaster) {
       const st = settings || {};
       const width = (st.PAPER_SIZE === '80mm') ? 48 : 32;
       const p = createEscPos(width);
@@ -854,6 +931,7 @@
       const totalQty = trx.items.reduce(function (sum, i) { return sum + Number(i.qty || 0); }, 0);
 
       p.init();
+      if (logoRaster) { p.align(1); p.bytes(logoRaster); p.align(0); }
       p.align(1); p.bold(true); p.wrapped(st.STORE_NAME || 'MINUM.ES'); p.bold(false);
       p.wrapped(st.STORE_SLOGAN || 'Segarnya Alami Tanpa Batas'); p.align(0);
       p.line('');
@@ -904,7 +982,18 @@
     }
 
     const printReceipt = (trx, settings) => {
-      if (getPrintPrefs().method === 'rawbt') { sendToRawBT(buildEscPosReceipt(trx, settings)); return; }
+      if (getPrintPrefs().method === 'rawbt') {
+        const info = logoRasterInfo(settings);
+        if (!info || _logoRasterCache[info.key] !== undefined) {
+          sendToRawBT(buildEscPosReceipt(trx, settings, info ? _logoRasterCache[info.key] : null));
+        } else {
+          // Logo belum sempat disiapkan: siapkan sekarang (cepat), lalu cetak.
+          loadLogoRaster(info.uri, info.maxW, info.maxH)
+            .then(function (r) { _logoRasterCache[info.key] = r; sendToRawBT(buildEscPosReceipt(trx, settings, r)); })
+            .catch(function () { _logoRasterCache[info.key] = null; sendToRawBT(buildEscPosReceipt(trx, settings, null)); });
+        }
+        return;
+      }
       let iframe = document.getElementById('receipt-print-iframe');
       if (!iframe) {
         iframe = document.createElement('iframe');
@@ -1624,6 +1713,9 @@
           loadSettings();
         }
       }, [user]);
+
+      // Siapkan logo untuk cetak RawBT begitu pengaturan (dengan logo tertanam) siap.
+      useEffect(() => { prepareLogoRaster(settings); }, [settings]);
 
       const triggerAlert = (message, title = "Informasi", type = "info") => {
         setAlertConfig({ isOpen: true, title, message, type, onConfirm: null });
