@@ -6657,7 +6657,7 @@
           // menyaring tanggal & kasir DI SERVER, jadi tidak perlu transfer
           // seluruh riwayat transaksi lama yang tidak dipakai.
           const branchParam = branch ? branch.ID : 'BR001';
-          runGoogleScript('getTodayCashierTransactions', cashierName, branchParam).then(data => {
+          runGoogleScript('getTodayCashierTransactions', '', branchParam).then(data => {
             setTrx(data || []);
             setLoading(false);
           }).catch(() => setLoading(false));
