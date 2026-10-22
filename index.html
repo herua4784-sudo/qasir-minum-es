@@ -9011,12 +9011,7 @@
               {topProducts.length > 0 && (
                 <div className="flex items-center gap-2 flex-1 min-w-0">
                   <button type="button" onClick={() => setShowTop(v => !v)} title="Tampilkan semua produk terlaris" className={'flex-shrink-0 text-xs font-bold whitespace-nowrap px-3 py-2 rounded-xl border ' + (showTop ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-600 border-amber-200')}><i className="fa-solid fa-fire mr-1"></i>Terlaris{showTop ? ' (tutup)' : ''}</button>
-                  <div className="flex gap-2 overflow-x-auto min-w-0 py-1">
-                    {topProducts.map(p => (
-                      <button key={p.ID} type="button" onClick={() => handleProductClick(p)} title={p.Name} style={{ maxWidth: '150px' }} className="flex-shrink-0 bg-white border border-amber-200 text-gray-700 px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap truncate">{p.Name}</button>
-                    ))}
                   </div>
-                </div>
               )}
             </div>
           </div>
@@ -9030,9 +9025,6 @@
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
                 {displayedProducts.map((p, idx) => (
                   <button key={p.ID} onClick={() => handleProductClick(p)} className="relative bg-white rounded-xl border overflow-hidden text-center hover:shadow-md hover:border-indigo-300 transition-all">
-                    {showTop && (
-                      <span style={{ position: 'absolute', top: '6px', left: '6px', zIndex: 1 }} className="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">#{idx + 1} · {topTotals[p.ID] || 0} terjual</span>
-                    )}
                     <div className="aspect-square bg-slate-50 overflow-hidden flex items-center justify-center">
                       {p.Image_URL ? (
                         <CachedImg url={p.Image_URL} size={200} alt={p.Name} className="h-full w-full object-cover" />
