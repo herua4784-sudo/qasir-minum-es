@@ -38,7 +38,7 @@
   </style>
 </head>
 <body>
-  <div id="root"></div>
+  <div id="root"><div id="boot-msg" style="font-family:Arial,sans-serif;text-align:center;padding:48px 24px;color:#475569">Memuat aplikasi&hellip;</div></div>
 
   <script type="text/babel">
     const { useState, useEffect, useRef, createContext, useContext } = React;
@@ -9329,8 +9329,23 @@
         navigator.serviceWorker.register('./sw.js').catch(function (err) {
           console.warn('Gagal mendaftarkan Service Worker:', err);
         });
+        // Setiap kali aplikasi dibuka, minta service worker melengkapi file offline
+        // yang mungkin belum tersimpan (misal saat pemasangan internetnya putus-putus).
+        navigator.serviceWorker.ready.then(function (reg) {
+          if (reg.active) reg.active.postMessage('ensure');
+        }).catch(function () {});
       });
     }
+
+    // Kalau setelah beberapa detik aplikasi belum tampil (misal pustaka belum pernah
+    // tersimpan dan tidak ada internet), tampilkan penjelasan, bukan layar putih kosong.
+    setTimeout(function () {
+      var boot = document.getElementById('boot-msg');
+      if (!boot) return;
+      boot.innerHTML = '<p style="font-weight:bold;font-size:18px;margin:0 0 8px">Aplikasi belum bisa dimuat</p>' +
+        '<p style="margin:0 0 16px">Jika tidak ada internet, buka aplikasi sekali saat online agar tersimpan untuk mode offline, lalu coba lagi.</p>' +
+        '<button onclick="location.reload()" style="background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:10px 20px;font-weight:bold;font-size:14px">Muat Ulang</button>';
+    }, 10000);
   </script>
 </body>
 </html>
