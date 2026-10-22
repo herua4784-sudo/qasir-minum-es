@@ -1808,6 +1808,7 @@
     function PendingSyncBadge() {
       const [items, setItems] = useState([]);
       const [syncing, setSyncing] = useState(false);
+      const [expanded, setExpanded] = useState(false); // default: pil kecil, supaya tidak menutupi tombol Simpan/Bayar
 
       const refresh = () => {
         queueGetAllWrites().then(list => setItems(list || [])).catch(() => {});
@@ -1841,8 +1842,25 @@
         setSyncing(false);
       };
 
+      // Letaknya di tengah atas (di bawah pita Offline), BUKAN pojok kanan bawah yang
+      // menutupi tombol Bayar. Ketuk pil untuk membuka detail & tombol Sinkron.
+      const pos = { position: 'fixed', top: '34px', left: '50%', transform: 'translateX(-50%)' };
+
+      if (!expanded) {
+        return (
+          <button type="button" onClick={() => setExpanded(true)} style={pos}
+            className={'z-[9999] text-white rounded-full shadow-lg px-3 py-1.5 text-xs font-bold flex items-center gap-2 ' + (failedItems.length > 0 ? 'bg-red-600' : 'bg-slate-800')}>
+            <i className="fa-solid fa-clock-rotate-left text-amber-400"></i>
+            <span>{pendingCount > 0 ? pendingCount + ' menunggu sinkron' : ''}{pendingCount > 0 && failedItems.length > 0 ? ' · ' : ''}{failedItems.length > 0 ? failedItems.length + ' gagal' : ''}</span>
+          </button>
+        );
+      }
+
       return (
-        <div className="fixed bottom-4 right-4 z-[9999] max-w-xs bg-slate-800 text-white rounded-xl shadow-lg px-4 py-3 text-sm">
+        <div style={pos} className="z-[9999] w-80 max-w-full bg-slate-800 text-white rounded-xl shadow-lg px-4 py-3 text-sm">
+          <div className="text-right mb-1">
+            <button type="button" onClick={() => setExpanded(false)} className="text-xs text-slate-300 px-2 py-0.5">Tutup <i className="fa-solid fa-xmark"></i></button>
+          </div>
           <div className="flex items-center gap-3">
             <i className="fa-solid fa-clock-rotate-left text-amber-400"></i>
             <span className="font-semibold">
