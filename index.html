@@ -772,7 +772,139 @@
     };
 
     // --- LOGIKA CETAK PRINTER BLUETOOTH / THERMAL (OPTIMASI BEBAS JEDA INSTAN) ---
+    // ==========================================
+    // CETAK LANGSUNG LEWAT RawBT (printer thermal Bluetooth, tanpa dialog cetak Android).
+    // Struk dibuat sebagai perintah ESC/POS (teks, bukan gambar) lalu diserahkan ke
+    // aplikasi RawBT lewat Android intent. Pilihan metode disimpan PER TABLET.
+    // Metode "dialog" (cara lama) tetap ada sebagai cadangan.
+    // ==========================================
+    const PRINT_PREFS_KEY = 'qasir_print_prefs';
+    function getPrintPrefs() {
+      try {
+        const p = JSON.parse(localStorage.getItem(PRINT_PREFS_KEY) || '{}');
+        return { method: p.method === 'rawbt' ? 'rawbt' : 'dialog', auto: !!p.auto };
+      } catch (e) { return { method: 'dialog', auto: false }; }
+    }
+    function savePrintPrefs(prefs) {
+      try { localStorage.setItem(PRINT_PREFS_KEY, JSON.stringify(prefs)); } catch (e) {}
+    }
+
+    // Printer thermal hanya menerima ASCII dengan andal: buang aksen, ganti tanda baca khusus.
+    function escposAscii(str) {
+      return String(str == null ? '' : str)
+        .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+        .replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-')
+        .replace(/[^\x20-\x7e]/gu, '?');
+    }
+
+    function escposWrap(text, width) {
+      const out = [];
+      String(text).split('\n').forEach(function (para) {
+        let line = '';
+        para.split(' ').forEach(function (word) {
+          while (word.length > width) {
+            if (line) { out.push(line); line = ''; }
+            out.push(word.slice(0, width)); word = word.slice(width);
+          }
+          if (!line) line = word;
+          else if ((line + ' ' + word).length <= width) line += ' ' + word;
+          else { out.push(line); line = word; }
+        });
+        out.push(line);
+      });
+      return out;
+    }
+
+    function createEscPos(width) {
+      const bytes = [];
+      const api = {
+        raw: function () { for (let i = 0; i < arguments.length; i++) bytes.push(arguments[i]); return api; },
+        init: function () { return api.raw(0x1b, 0x40); },
+        align: function (n) { return api.raw(0x1b, 0x61, n); },   // 0 kiri, 1 tengah, 2 kanan
+        bold: function (on) { return api.raw(0x1b, 0x45, on ? 1 : 0); },
+        feed: function (n) { return api.raw(0x1b, 0x64, n); },
+        line: function (text) {
+          const t = escposAscii(text);
+          for (let i = 0; i < t.length; i++) bytes.push(t.charCodeAt(i));
+          bytes.push(0x0a); return api;
+        },
+        wrapped: function (text) { escposWrap(String(text == null ? '' : text), width).forEach(function (l) { api.line(l); }); return api; },
+        center: function (text) { api.align(1); api.wrapped(text); api.align(0); return api; },
+        right: function (text) { api.align(2); api.wrapped(text); api.align(0); return api; },
+        divider: function (ch) { return api.line(new Array(width + 1).join(ch || '-')); },
+        // kiri & kanan satu baris; kalau tidak muat, kiri dibungkus lalu kanan di baris sendiri
+        lr: function (left, right) {
+          const l = escposAscii(left), r = escposAscii(right);
+          if (l.length + r.length + 1 <= width) {
+            return api.line(l + new Array(width - l.length - r.length + 1).join(' ') + r);
+          }
+          api.wrapped(l); return api.right(r);
+        },
+        build: function () { return new Uint8Array(bytes); }
+      };
+      return api;
+    }
+
+    function buildEscPosReceipt(trx, settings) {
+      const st = settings || {};
+      const width = (st.PAPER_SIZE === '80mm') ? 48 : 32;
+      const p = createEscPos(width);
+      const money = function (n) { return Number(n || 0).toLocaleString('id-ID'); };
+      const itemName = function (name) { return String(name).replace(' (Medium)', ' - Medium').replace(' (Jumbo)', ' - Jumbo'); };
+      const totalQty = trx.items.reduce(function (sum, i) { return sum + Number(i.qty || 0); }, 0);
+
+      p.init();
+      p.align(1); p.bold(true); p.wrapped(st.STORE_NAME || 'MINUM.ES'); p.bold(false);
+      p.wrapped(st.STORE_SLOGAN || 'Segarnya Alami Tanpa Batas'); p.align(0);
+      p.line('');
+      p.lr(String(trx.id), String(trx.date));
+      p.right(String(trx.paymentMethod || ''));
+      const mid = ' LUNAS ';
+      const side = Math.max(0, Math.floor((width - mid.length) / 2));
+      p.line(new Array(side + 1).join('-') + mid + new Array(width - side - mid.length + 1).join('-'));
+      trx.items.forEach(function (item) {
+        const qty = Number(item.qty || 0);
+        const discount = Number(item.Discount || 0);
+        p.bold(true); p.wrapped(itemName(item.Name)); p.bold(false);
+        p.lr('x' + qty + ' @' + money(item.Price), money(item.Price * qty - discount));
+        if (discount > 0) p.lr('Diskon', '-' + money(discount));
+      });
+      p.divider('-');
+      p.bold(true); p.lr('Total (' + totalQty + ')', money(trx.total)); p.bold(false);
+      p.lr('Bayar', money(trx.cashReceived));
+      p.bold(true); p.lr('Kembali', money(trx.change)); p.bold(false);
+      p.line('');
+      p.center(st.STORE_FOOTER || 'Terima Kasih\nSilakan Datang Kembali!');
+      p.feed(4);
+      return p.build();
+    }
+
+    function buildEscPosOrderTicket(trx, settings) {
+      const width = (settings && settings.PAPER_SIZE === '80mm') ? 48 : 32;
+      const p = createEscPos(width);
+      const totalQty = trx.items.reduce(function (sum, i) { return sum + Number(i.qty || 0); }, 0);
+      p.init();
+      p.align(1); p.bold(true); p.line('PESANAN'); p.bold(false); p.line(String(trx.date)); p.align(0);
+      p.divider('-');
+      trx.items.forEach(function (item) {
+        const nameOnly = String(item.Name).replace(' (Medium)', ' - Medium').replace(' (Jumbo)', ' - Jumbo');
+        p.bold(true); p.wrapped(item.qty + 'x ' + nameOnly); p.bold(false);
+      });
+      p.divider('-');
+      p.right('Total Item: ' + totalQty);
+      p.feed(4);
+      return p.build();
+    }
+
+    // Serahkan byte ESC/POS ke aplikasi RawBT (harus terpasang di tablet Android).
+    function sendToRawBT(bytes) {
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      window.location.href = 'intent:base64,' + btoa(bin) + '#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;';
+    }
+
     const printReceipt = (trx, settings) => {
+      if (getPrintPrefs().method === 'rawbt') { sendToRawBT(buildEscPosReceipt(trx, settings)); return; }
       let iframe = document.getElementById('receipt-print-iframe');
       if (!iframe) {
         iframe = document.createElement('iframe');
@@ -977,6 +1109,7 @@
     // untuk pelanggan. Mengikuti pola aman yang sama seperti printReceipt: pemicu
     // cetak dijalankan DI LUAR document.write().
     const printOrderTicket = (trx, settings) => {
+      if (getPrintPrefs().method === 'rawbt') { sendToRawBT(buildEscPosOrderTicket(trx, settings)); return; }
       let iframe = document.getElementById('order-ticket-print-iframe');
       if (!iframe) {
         iframe = document.createElement('iframe');
@@ -6288,6 +6421,38 @@
       );
     }
 
+    // Pengaturan cetak untuk tablet ini: metode (dialog Android / RawBT), cetak otomatis, tes cetak.
+    function PrintMethodRow({ settings }) {
+      const [prefs, setPrefs] = useState(getPrintPrefs);
+      const update = (patch) => { const next = Object.assign({}, prefs, patch); setPrefs(next); savePrintPrefs(next); };
+      const testPrint = () => {
+        const p = createEscPos((settings && settings.PAPER_SIZE === '80mm') ? 48 : 32);
+        p.init(); p.align(1); p.bold(true); p.line('TES CETAK'); p.bold(false);
+        p.line('Printer terhubung dengan baik'); p.align(0); p.feed(4);
+        sendToRawBT(p.build());
+      };
+      return (
+        <div className="border rounded-xl p-3 mb-3 bg-slate-50">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-bold text-gray-600">Cara cetak di tablet ini</span>
+            <div className="flex gap-1">
+              <button type="button" onClick={() => update({ method: 'dialog' })} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${prefs.method === 'dialog' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700'}`}>Dialog</button>
+              <button type="button" onClick={() => update({ method: 'rawbt' })} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${prefs.method === 'rawbt' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700'}`}>RawBT</button>
+            </div>
+          </div>
+          {prefs.method === 'rawbt' && (
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <label className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                <input type="checkbox" checked={prefs.auto} onChange={e => update({ auto: e.target.checked })} />
+                Cetak otomatis setelah bayar
+              </label>
+              <button type="button" onClick={testPrint} className="px-3 py-1.5 rounded-lg text-xs font-bold border bg-white text-gray-700">Tes Cetak</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // --- RIWAYAT TRANSAKSI VIEW (STANDAR TANPA DUPLIKAT) ---
     function HistoryView({ limitToday, cashierName, settings, branch, allowBranchFilter }) {
       const [trx, setTrx] = useState([]);
@@ -8568,7 +8733,7 @@
             // Pesanan di layar sukses, TANPA langsung mencetak sekarang — supaya kasir
             // tidak perlu menunggu printer Bluetooth merespons sebelum bisa lanjut
             // melayani pembeli berikutnya.
-            setLastTrx({
+            const newTrx = {
               id: res.trxId,
               date: res.date,
               cashier: user.name,
@@ -8578,7 +8743,9 @@
               cashReceived: finalCashReceived,
               change: finalChange,
               offlineQueued: res.offlineQueued || false
-            });
+            };
+            setLastTrx(newTrx);
+            if (getPrintPrefs().method === 'rawbt' && getPrintPrefs().auto) setTimeout(() => printReceipt(newTrx, settings), 150);
 
             // Pengurangan stok bahan baku dijalankan di LATAR BELAKANG, sengaja TIDAK
             // ditunggu (tanpa "await"), supaya kasir bisa langsung lanjut ke pembeli
@@ -8998,6 +9165,7 @@
                     </div>
                   </div>
 
+                  <PrintMethodRow settings={settings} />
                   <div className="grid grid-cols-3 gap-2 mb-3">
                     <button onClick={() => printReceipt(lastTrx, settings)} className="bg-slate-50 hover:bg-slate-100 border text-gray-700 font-bold py-3 rounded-xl transition-colors text-xs">
                       Cetak Struk
