@@ -515,6 +515,10 @@
 
       const fromServer = runGoogleScriptRaw(functionName, ...args).then(function (result) {
         offlineCacheSet(cacheKey, result); // perbarui simpanan untuk lain kali
+        try {
+          if (functionName === 'getProducts' && Array.isArray(result)) prefetchImages(result.map(function (x) { return x && x.Image_URL; }));
+          if (functionName === 'getSettings' && result && result.QRIS_Type === 'Static') prefetchImages([result.QRIS_Image_URL]);
+        } catch (e) {}
         readFetchedAt[cacheKey] = Math.max(readFetchedAt[cacheKey] || 0, versionAtRequest);
         readSource[cacheKey] = 'server';
         return result;
@@ -639,6 +643,91 @@
       if (url.includes('drive.google.com') && ucMatch) return `https://drive.google.com/thumbnail?id=${ucMatch[1]}&sz=w${sz}`;
       return url;
     };
+
+    // ==========================================
+    // FOTO OFFLINE: foto produk/QRIS ada di Google Drive (situs lain), dan Service
+    // Worker tidak bisa menyimpan gambar lintas-situs. Jadi setelah data produk
+    // berhasil dimuat ONLINE, fotonya diunduh sekali lewat server (sebagai teks Base64
+    // kecil) dan disimpan di IndexedDB. Saat offline, <CachedImg> memakai simpanan itu.
+    // ==========================================
+    const _imgMem = {};
+    const _imgFailed = {};
+    let _imgPrefetching = false;
+    const imageDriveId = (url) => {
+      if (!url) return null;
+      const m = String(url).match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || (String(url).includes('drive.google.com') ? String(url).match(/[?&]id=([a-zA-Z0-9_-]+)/) : null);
+      return m ? m[1] : null;
+    };
+    const imageKeyOf = (url) => 'img:' + (imageDriveId(url) || String(url));
+
+    const prefetchImages = async (urls) => {
+      if (_imgPrefetching || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+      _imgPrefetching = true;
+      try {
+        const seen = {};
+        const todo = [];
+        for (const u of (urls || [])) {
+          if (!u || typeof u !== 'string') continue;
+          const k = imageKeyOf(u);
+          if (seen[k] || _imgMem[k] || _imgFailed[k]) continue;
+          seen[k] = true;
+          const have = await offlineCacheGet(k);
+          if (have) { _imgMem[k] = have; continue; }
+          todo.push({ u, k, id: imageDriveId(u) });
+        }
+        const drive = todo.filter(t => t.id);
+        const other = todo.filter(t => !t.id);
+        let useFallback = false;
+        for (let i = 0; i < drive.length && !useFallback; i += 6) {
+          const chunk = drive.slice(i, i + 6);
+          try {
+            const res = await runGoogleScript('getImageThumbnails', chunk.map(t => t.id));
+            if (res && res.success && res.items) {
+              for (const t of chunk) {
+                const d = res.items[t.id];
+                if (d) { _imgMem[t.k] = d; await offlineCacheSet(t.k, d); } else { _imgFailed[t.k] = true; }
+              }
+            } else { useFallback = true; }
+          } catch (err) {
+            if (String(err && (err.message || err)).indexOf('tidak diizinkan') !== -1) { useFallback = true; } else { return; }
+          }
+        }
+        // Server belum diperbarui (fungsi baru belum ada)? pakai fungsi lama satu per satu.
+        const single = (useFallback ? drive : []).concat(other);
+        for (const t of single) {
+          try {
+            const res = await runGoogleScript('getImageAsBase64', t.id ? formatImageUrl(t.u) : t.u);
+            if (res && res.success && res.dataUri) { _imgMem[t.k] = res.dataUri; await offlineCacheSet(t.k, res.dataUri); } else { _imgFailed[t.k] = true; }
+          } catch (err) { return; }
+        }
+      } catch (e) {
+        /* foto offline hanya pelengkap; gagal tidak boleh mengganggu aplikasi */
+      } finally { _imgPrefetching = false; }
+    };
+
+    // Pengganti <img> untuk foto dari Drive: normal saat online; kalau gagal dimuat
+    // (offline), pakai simpanan IndexedDB; kalau tidak ada juga, tampilkan ikon.
+    function CachedImg({ url, size, className, alt, fallbackIcon }) {
+      const [stage, setStage] = useState(0);
+      const [src, setSrc] = useState(() => {
+        const k = imageKeyOf(url);
+        if (_imgMem[k] && typeof navigator !== 'undefined' && navigator.onLine === false) return _imgMem[k];
+        return formatImageUrl(url, size);
+      });
+      useEffect(() => {
+        setStage(0);
+        const k = imageKeyOf(url);
+        setSrc((_imgMem[k] && navigator.onLine === false) ? _imgMem[k] : formatImageUrl(url, size));
+      }, [url, size]);
+      const handleError = () => {
+        if (stage !== 0) { setStage(2); return; }
+        const k = imageKeyOf(url);
+        const useData = (d) => { if (d) { _imgMem[k] = d; setStage(1); setSrc(d); } else { setStage(2); } };
+        if (_imgMem[k]) useData(_imgMem[k]); else offlineCacheGet(k).then(useData).catch(() => setStage(2));
+      };
+      if (!url || stage === 2) return <i className={'fa-solid ' + (fallbackIcon || 'fa-mug-hot') + ' text-slate-300 text-3xl'}></i>;
+      return <img src={src} alt={alt || ''} className={className} loading="lazy" decoding="async" onError={handleError} />;
+    }
 
     const parseIndoDate = (dateVal) => {
       if (!dateVal) return new Date();
@@ -2720,7 +2809,7 @@
                          <td className="p-4">
                            <div className="h-10 w-10 bg-slate-100 rounded-lg overflow-hidden flex items-center justify-center border shadow-sm">
                              {p.Image_URL ? (
-                               <img src={formatImageUrl(p.Image_URL)} alt={p.Name} className="h-full w-full object-contain p-1" onError={(e) => { e.target.onerror = null; e.target.src = "https://placehold.co/200x200/ffffff/94a3b8?text=Image+Error"; }} />
+                               <CachedImg url={p.Image_URL} alt={p.Name} fallbackIcon="fa-image" className="h-full w-full object-contain p-1" />
                              ) : (
                                <i className="fa-solid fa-image text-slate-300"></i>
                              )}
@@ -8323,7 +8412,7 @@
                   <button key={p.ID} onClick={() => handleProductClick(p)} className="bg-white rounded-xl border overflow-hidden text-center hover:shadow-md hover:border-indigo-300 transition-all">
                     <div className="aspect-square bg-slate-50 overflow-hidden flex items-center justify-center">
                       {p.Image_URL ? (
-                        <img src={formatImageUrl(p.Image_URL, 200)} loading="lazy" decoding="async" className="h-full w-full object-cover" onError={(e) => { e.target.onerror = null; e.target.src = "https://placehold.co/200x200/ffffff/94a3b8?text=No+Image"; }} />
+                        <CachedImg url={p.Image_URL} size={200} alt={p.Name} className="h-full w-full object-cover" />
                       ) : (
                         <i className="fa-solid fa-mug-hot text-slate-300 text-3xl"></i>
                       )}
@@ -8466,7 +8555,7 @@
                 <div className="p-5 flex items-center gap-3 border-b flex-shrink-0">
                   <div className="h-14 w-14 bg-slate-50 rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0">
                     {orderModal.product.Image_URL ? (
-                      <img src={formatImageUrl(orderModal.product.Image_URL)} className="h-full w-full object-contain" onError={(e) => { e.target.onerror = null; e.target.src = "https://placehold.co/200x200/ffffff/94a3b8?text=No+Image"; }} />
+                      <CachedImg url={orderModal.product.Image_URL} className="h-full w-full object-contain" />
                     ) : (
                       <i className="fa-solid fa-mug-hot text-slate-300 text-xl"></i>
                     )}
@@ -8596,7 +8685,7 @@
                   <div className="text-center">
                     <div className="bg-white border rounded-xl p-3 w-40 h-40 mx-auto flex items-center justify-center mb-2">
                       {settings.QRIS_Type === 'Static' && settings.QRIS_Image_URL ? (
-                        <img src={formatImageUrl(settings.QRIS_Image_URL)} className="w-full h-full object-contain" />
+                        <CachedImg url={settings.QRIS_Image_URL} fallbackIcon="fa-qrcode" className="w-full h-full object-contain" />
                       ) : (
                         <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://minum.es/pay/preview" className="w-full h-full object-contain" />
                       )}
