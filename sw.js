@@ -12,7 +12,7 @@
 // Naikkan angka versi ini (v1 -> v2 -> dst) SETIAP kali Index.html diperbarui,
 // supaya HP pengguna otomatis unduh ulang versi terbaru, bukan versi lama yang
 // ketinggalan tersimpan di cache.
-const CACHE_NAME = 'qasir-minumes-v12';
+const CACHE_NAME = 'qasir-minumes-v13';
 
 const APP_SHELL = [
   './',
