@@ -3350,10 +3350,21 @@
             setMessage({ type: 'error', text: (res && res.message) || 'Gagal menyiapkan login offline.' });
           } else {
             const out = await provisionOfflineLogin(res.accounts || [], branchId);
+            // Sekalian simpan data kerja outlet ini (produk, kategori, bahan, pengaturan,
+            // riwayat stok) supaya kasir yang masuk pertama kali dalam keadaan offline
+            // langsung punya menu untuk berjualan, bukan layar kosong. Foto produk
+            // diunduh di latar belakang setelahnya.
+            await Promise.all([
+              runGoogleScript('getProducts', branchId),
+              runGoogleScript('getCategories'),
+              runGoogleScript('getIngredients', branchId),
+              runGoogleScript('getSettings'),
+              runGoogleScript('getRecentStockMovements', branchId, 300, 'Semua', true)
+            ].map(pr => Promise.resolve(pr).catch(() => {})));
             if (out.added === 0) {
               setMessage({ type: 'warn', text: 'Tidak ada akun pegawai untuk outlet ini.' + (out.removed > 0 ? ' ' + out.removed + ' akun lama dihapus dari tablet ini.' : '') });
             } else {
-              setMessage({ type: 'ok', text: out.added + ' akun pegawai siap login offline di tablet ini (' + out.names.join(', ') + '). Berlaku 30 hari.' + (out.removed > 0 ? ' ' + out.removed + ' akun lama yang sudah tidak terdaftar dihapus dari tablet ini.' : '') });
+              setMessage({ type: 'ok', text: out.added + ' akun pegawai siap login offline di tablet ini (' + out.names.join(', ') + '). Data produk outlet ikut disimpan; foto produk menyusul beberapa saat. Berlaku 30 hari.' + (out.removed > 0 ? ' ' + out.removed + ' akun lama yang sudah tidak terdaftar dihapus dari tablet ini.' : '') });
             }
             setPassword('');
           }
