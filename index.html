@@ -1938,7 +1938,9 @@
         runGoogleScript('getBranches')
           .then(data => {
             setBranches(data || []);
-            if (data && data.length > 0) setBranchId(data[0].ID);
+            // Outlet sengaja dikosongkan: kasir harus memilih sendiri. Kalau hanya ada
+            // satu outlet, langsung dipilihkan.
+            if (data && data.length === 1) setBranchId(data[0].ID);
           })
           .catch(() => {});
       }, []);
@@ -1946,6 +1948,7 @@
       // Menyelesaikan login (dipakai jalur online maupun offline): cek aturan outlet,
       // lalu masuk. Mengembalikan false kalau login ditolak karena salah pilih outlet.
       const branchErrorFor = (user) => {
+        if (branches.length > 1 && !branchId) return 'Pilih outlet dulu.';
         const isOwner = user.role === 'Owner';
         const ownBranchId = user.branchId;
         // Pegawai (bukan Owner) hanya boleh login di cabang yang memang jadi tempatnya.
@@ -2067,14 +2070,16 @@
         setLoading(false);
       };
 
-      const visiblePinAccounts = pinAccounts.filter(a => !a.branchId || !branchId || a.branchId === branchId);
+      const needOutlet = branches.length > 1 && !branchId;
+      const visiblePinAccounts = needOutlet ? [] : pinAccounts.filter(a => !a.branchId || a.branchId === branchId);
 
       const outletField = branches.length > 1 ? (
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Outlet</label>
           <div className="relative">
             <i className="fa-solid fa-store absolute left-3 top-3.5 text-gray-400"></i>
-            <select value={branchId} onChange={e => setBranchId(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white appearance-none">
+            <select value={branchId} onChange={e => { setBranchId(e.target.value); setPinUser(''); setPinValue(''); setError(''); }} className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white appearance-none">
+              <option value="">-- Pilih outlet --</option>
               {branches.map(b => <option key={b.ID} value={b.ID}>{b.Name}</option>)}
             </select>
           </div>
@@ -2106,11 +2111,13 @@
                 <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-lg transition-all">Simpan PIN & Masuk</button>
                 <button type="button" onClick={handleSkipPin} className="w-full text-sm text-gray-500 py-2">Lewati, masuk tanpa PIN</button>
               </form>
-            ) : (mode === 'pin' && visiblePinAccounts.length > 0) ? (
+            ) : (mode === 'pin' && pinAccounts.length > 0) ? (
               <form onSubmit={handlePinLogin} className="space-y-4">
                 {outletField}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Pilih nama Anda</label>
+                  {needOutlet && <p className="text-sm text-gray-500 text-center py-2">Pilih outlet dulu untuk melihat nama kasir.</p>}
+                  {!needOutlet && visiblePinAccounts.length === 0 && <p className="text-sm text-gray-500 text-center py-2">Belum ada kasir ber-PIN di outlet ini. Masuk dengan password.</p>}
                   <div className="grid grid-cols-2 gap-2">
                     {visiblePinAccounts.map(a => (
                       <button type="button" key={a.username} onClick={() => { setPinUser(a.username); setPinValue(''); setError(''); }} className={`px-3 py-3 rounded-lg border text-sm font-bold truncate ${pinUser === a.username ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-300 hover:border-indigo-400'}`}>{a.name}</button>
@@ -2146,7 +2153,7 @@
               <button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-lg flex justify-center items-center gap-2 mt-6 transition-all duration-300 shadow-lg shadow-indigo-200">
                 {loading ? <div className="loader border-white border-t-indigo-600"></div> : <span>Masuk Aplikasi</span>}
               </button>
-              {visiblePinAccounts.length > 0 && (
+              {pinAccounts.length > 0 && (
                 <button type="button" onClick={() => { setMode('pin'); setForcePinSetup(false); setError(''); }} className="w-full text-sm text-indigo-600 hover:text-indigo-800 py-2">Kembali masuk dengan PIN</button>
               )}
             </form>
