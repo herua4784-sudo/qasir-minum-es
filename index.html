@@ -6597,8 +6597,8 @@
         localStorage.setItem(topSalesKey(branchId), JSON.stringify(days));
       } catch (e) { /* penyimpanan lokal tidak tersedia: fitur ini hanya pelengkap */ }
     }
-    // ID produk, terlaris dulu.
-    function topProductIds(branchId) {
+    // Total terjual per produk (30 hari terakhir).
+    function topProductTotals(branchId) {
       const days = loadTopSales(branchId);
       const cutoff = topDayKey(new Date(Date.now() - TOP_DAYS * 24 * 60 * 60 * 1000));
       const totals = {};
@@ -6606,6 +6606,11 @@
         if (k < cutoff) return;
         Object.keys(days[k]).forEach(function (id) { totals[id] = (totals[id] || 0) + days[k][id]; });
       });
+      return totals;
+    }
+    // ID produk, terlaris dulu.
+    function topProductIds(branchId) {
+      const totals = topProductTotals(branchId);
       return Object.keys(totals).filter(function (id) { return totals[id] > 0; })
         .sort(function (a, b) { return totals[b] - totals[a] || (a < b ? -1 : 1); });
     }
@@ -8673,6 +8678,8 @@
     function POSView({ user, branch, settings }) {
       const [products, setProducts] = useState([]);
       const [topIds, setTopIds] = useState(() => topProductIds(branch ? branch.ID : 'BR001'));
+      const [topTotals, setTopTotals] = useState(() => topProductTotals(branch ? branch.ID : 'BR001'));
+      const [showTop, setShowTop] = useState(false); // true: grid hanya menampilkan produk terlaris
       const [categories, setCategories] = useState([]);
       const [loading, setLoading] = useState(true);
       const [filterCat, setFilterCat] = useState('Semua');
@@ -8908,6 +8915,7 @@
             setLastTrx(newTrx);
             recordTopSales(branch ? branch.ID : 'BR001', cart);
             setTopIds(topProductIds(branch ? branch.ID : 'BR001'));
+            setTopTotals(topProductTotals(branch ? branch.ID : 'BR001'));
             if (getPrintPrefs().method === 'rawbt' && getPrintPrefs().auto) setTimeout(() => printReceipt(newTrx, settings), 150);
 
             // Pengurangan stok bahan baku dijalankan di LATAR BELAKANG, sengaja TIDAK
@@ -8933,12 +8941,18 @@
         setProcessing(false);
       };
 
-      const displayedProducts = products.filter(p => {
-        const matchCat = filterCat === 'Semua' || p.Category === filterCat;
-        const matchSearch = !searchQuery.trim() || p.Name.toLowerCase().includes(searchQuery.trim().toLowerCase());
-        const hasPricing = Number(p.Price) > 0 || Number(p.Harga_Jumbo) > 0;
-        return matchCat && matchSearch && hasPricing;
-      });
+      const displayedProducts = showTop
+        // Mode "Terlaris": semua produk yang pernah terjual, urut dari yang paling laku.
+        ? topIds
+            .map(id => products.find(p => p.ID === id))
+            .filter(p => p && (Number(p.Price) > 0 || Number(p.Harga_Jumbo) > 0)
+              && (!searchQuery.trim() || p.Name.toLowerCase().includes(searchQuery.trim().toLowerCase())))
+        : products.filter(p => {
+            const matchCat = filterCat === 'Semua' || p.Category === filterCat;
+            const matchSearch = !searchQuery.trim() || p.Name.toLowerCase().includes(searchQuery.trim().toLowerCase());
+            const hasPricing = Number(p.Price) > 0 || Number(p.Harga_Jumbo) > 0;
+            return matchCat && matchSearch && hasPricing;
+          });
 
       // Maksimal 6 produk terlaris (semua kategori, termasuk Topping & Tambahan).
       const topProducts = topIds
@@ -8989,13 +9003,14 @@
 
             {/* Dropdown kategori + produk terlaris */}
             <div className="mb-4 flex items-center gap-2">
-              <select value={filterCat} onChange={e => setFilterCat(e.target.value)} className="px-3 py-2.5 border rounded-xl text-sm font-bold bg-white flex-shrink-0 sm:min-w-[200px]">
+              <select value={showTop ? '__top' : filterCat} onChange={e => { setShowTop(false); setFilterCat(e.target.value); }} className="px-3 py-2.5 border rounded-xl text-sm font-bold bg-white flex-shrink-0 sm:min-w-[200px]">
+                {showTop && <option value="__top" disabled>Terlaris</option>}
                 <option value="Semua">Semua Kategori</option>
                 {categories.map(c => <option key={c.ID} value={c.Name}>{c.Name}</option>)}
               </select>
               {topProducts.length > 0 && (
                 <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <span className="flex-shrink-0 text-xs font-bold text-amber-600 whitespace-nowrap"><i className="fa-solid fa-fire mr-1"></i>Terlaris</span>
+                  <button type="button" onClick={() => setShowTop(v => !v)} title="Tampilkan semua produk terlaris" className={'flex-shrink-0 text-xs font-bold whitespace-nowrap px-3 py-2 rounded-xl border ' + (showTop ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-600 border-amber-200')}><i className="fa-solid fa-fire mr-1"></i>Terlaris{showTop ? ' (tutup)' : ''}</button>
                   <div className="flex gap-2 overflow-x-auto min-w-0 py-1">
                     {topProducts.map(p => (
                       <button key={p.ID} type="button" onClick={() => handleProductClick(p)} title={p.Name} style={{ maxWidth: '150px' }} className="flex-shrink-0 bg-white border border-amber-200 text-gray-700 px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap truncate">{p.Name}</button>
@@ -9010,11 +9025,14 @@
             {loading ? (
               <div className="text-center py-16 text-gray-400"><i className="fa-solid fa-spinner fa-spin text-3xl"></i></div>
             ) : displayedProducts.length === 0 ? (
-              <div className="text-center py-16 text-gray-400">Tidak ada produk di kategori ini.</div>
+              <div className="text-center py-16 text-gray-400">{showTop ? 'Belum ada data penjualan di tablet ini.' : 'Tidak ada produk di kategori ini.'}</div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-                {displayedProducts.map(p => (
-                  <button key={p.ID} onClick={() => handleProductClick(p)} className="bg-white rounded-xl border overflow-hidden text-center hover:shadow-md hover:border-indigo-300 transition-all">
+                {displayedProducts.map((p, idx) => (
+                  <button key={p.ID} onClick={() => handleProductClick(p)} className="relative bg-white rounded-xl border overflow-hidden text-center hover:shadow-md hover:border-indigo-300 transition-all">
+                    {showTop && (
+                      <span style={{ position: 'absolute', top: '6px', left: '6px', zIndex: 1 }} className="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">#{idx + 1} · {topTotals[p.ID] || 0} terjual</span>
+                    )}
                     <div className="aspect-square bg-slate-50 overflow-hidden flex items-center justify-center">
                       {p.Image_URL ? (
                         <CachedImg url={p.Image_URL} size={200} alt={p.Name} className="h-full w-full object-cover" />
