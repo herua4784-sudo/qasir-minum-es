@@ -1801,6 +1801,118 @@
       return { ok: false, reason: 'wrong' };
     }
 
+    // ==========================================
+    // LOGIN PIN (masuk cepat): kasir cukup pilih nama + PIN 4-6 angka.
+    // PIN hanya berlaku di TABLET ini (disimpan sebagai sidik jari PBKDF2, bukan PIN
+    // aslinya) dan tidak menggantikan password: dibuat setelah kasir login dengan
+    // password. Salah 5 kali -> PIN dihapus, harus masuk dengan password lagi.
+    // Saat online, akun dicek ke server (masih terdaftar? peran berubah?); saat
+    // offline, PIN berlaku 30 hari sejak terakhir dikonfirmasi online.
+    // ==========================================
+    const PIN_INDEX_KEY = 'pin-index';
+    const PIN_MAX_FAILS = 5;
+    const PIN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+    function pinEligible(user) {
+      return !!user && offlineLoginAvailable() && user.role !== 'Owner' && user.role !== 'Administrator' && user.role !== 'Rekan Bisnis';
+    }
+    function pinFormatOk(pin) { return /^[0-9]{4,6}$/.test(String(pin || '')); }
+
+    async function pinIndexGet() {
+      const idx = await offlineCacheGet(PIN_INDEX_KEY);
+      return Array.isArray(idx) ? idx : [];
+    }
+    async function hasPin(username) {
+      const rec = await offlineCacheGet('pin:' + username);
+      return !!(rec && rec.hash);
+    }
+    async function clearPin(username) {
+      await offlineCacheSet('pin:' + username, null);
+      const idx = await pinIndexGet();
+      const next = idx.filter(u => u !== username);
+      if (next.length !== idx.length) await offlineCacheSet(PIN_INDEX_KEY, next);
+    }
+    async function savePin(username, pin, user) {
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const hash = await derivePasswordHash(String(pin), salt, OFFLINE_LOGIN_ITERATIONS);
+      await offlineCacheSet('pin:' + username, {
+        salt: bytesToBase64(salt), hash: bytesToBase64(hash), iterations: OFFLINE_LOGIN_ITERATIONS,
+        user: user, setAt: Date.now(), verifiedAt: Date.now(), fails: 0
+      });
+      const idx = await pinIndexGet();
+      if (idx.indexOf(username) === -1) { idx.push(username); await offlineCacheSet(PIN_INDEX_KEY, idx); }
+    }
+    // Daftar kasir yang sudah punya PIN di tablet ini (untuk tombol nama di layar login).
+    async function listPinAccounts() {
+      const out = [];
+      for (const key of await pinIndexGet()) {
+        const rec = await offlineCacheGet('pin:' + key);
+        if (!rec || !rec.user) continue;
+        out.push({ username: key, name: rec.user.name || key, role: rec.user.role, branchId: rec.user.branchId || '' });
+      }
+      out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      return out;
+    }
+
+    // Tanya server apakah akun masih ada. 'unreachable' = tidak bisa memastikan (offline/lambat).
+    async function confirmAccountOnline(username) {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return { status: 'unreachable' };
+      try {
+        const list = await Promise.race([
+          runGoogleScriptRaw('getEmployees'),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+        ]);
+        if (!Array.isArray(list)) return { status: 'unreachable' };
+        const emp = list.find(e => String(e.Username).trim().toLowerCase() === username);
+        return emp ? { status: 'ok', emp: emp } : { status: 'gone' };
+      } catch (e) { return { status: 'unreachable' }; }
+    }
+
+    // Hasil: { ok:true, user } atau { ok:false, reason:'unsupported'|'no-record'|'wrong'|'wiped'|'expired'|'gone'|'role', left? }
+    async function loginWithPin(username, pin) {
+      if (!offlineLoginAvailable()) return { ok: false, reason: 'unsupported' };
+      const rec = await offlineCacheGet('pin:' + username);
+      if (!rec || !rec.hash) return { ok: false, reason: 'no-record' };
+      let same = false;
+      try {
+        const hash = await derivePasswordHash(String(pin), base64ToBytes(rec.salt), rec.iterations);
+        const expected = base64ToBytes(rec.hash);
+        let diff = hash.length === expected.length ? 0 : 1;
+        for (let i = 0; i < hash.length && i < expected.length; i++) diff |= hash[i] ^ expected[i];
+        same = diff === 0;
+      } catch (e) { return { ok: false, reason: 'unsupported' }; }
+
+      if (!same) {
+        const fails = (rec.fails || 0) + 1;
+        if (fails >= PIN_MAX_FAILS) { await clearPin(username); return { ok: false, reason: 'wiped' }; }
+        await offlineCacheSet('pin:' + username, Object.assign({}, rec, { fails: fails }));
+        return { ok: false, reason: 'wrong', left: PIN_MAX_FAILS - fails };
+      }
+
+      const check = await confirmAccountOnline(username);
+      if (check.status === 'gone') {
+        await clearPin(username);
+        await clearOfflineLogin(username);
+        return { ok: false, reason: 'gone' };
+      }
+      let user = rec.user;
+      let verifiedAt = rec.verifiedAt || rec.setAt || 0;
+      if (check.status === 'ok') {
+        const role = check.emp.Role;
+        if (role === 'Owner' || role === 'Administrator' || role === 'Rekan Bisnis') {
+          await clearPin(username);
+          return { ok: false, reason: 'role' };
+        }
+        user = Object.assign({}, rec.user, { role: role, name: check.emp.Name || rec.user.name });
+        if (check.emp.Branch_ID) user.branchId = check.emp.Branch_ID;
+        verifiedAt = Date.now();
+      } else if (Date.now() - verifiedAt > PIN_MAX_AGE_MS) {
+        return { ok: false, reason: 'expired' };
+      }
+      await offlineCacheSet('pin:' + username, Object.assign({}, rec, { fails: 0, verifiedAt: verifiedAt, user: user }));
+      return { ok: true, user: user };
+    }
+
     function LoginScreen({ onLogin }) {
       const [username, setUsername] = useState('');
       const [password, setPassword] = useState('');
@@ -1809,6 +1921,18 @@
       const [branches, setBranches] = useState([]);
       const [branchId, setBranchId] = useState('');
       const notify = useNotification();
+      const [mode, setMode] = useState('pin'); // 'pin' | 'password' (PIN dipakai otomatis kalau tablet ini punya akun ber-PIN)
+      const [pinAccounts, setPinAccounts] = useState([]);
+      const [pinUser, setPinUser] = useState('');
+      const [pinValue, setPinValue] = useState('');
+      const [pinSetup, setPinSetup] = useState(null); // { uname, user } saat kasir diminta membuat PIN
+      const [newPin, setNewPin] = useState('');
+      const [newPin2, setNewPin2] = useState('');
+      const [forcePinSetup, setForcePinSetup] = useState(false);
+
+      useEffect(() => {
+        listPinAccounts().then(setPinAccounts).catch(() => {});
+      }, []);
 
       useEffect(() => {
         runGoogleScript('getBranches')
@@ -1821,22 +1945,81 @@
 
       // Menyelesaikan login (dipakai jalur online maupun offline): cek aturan outlet,
       // lalu masuk. Mengembalikan false kalau login ditolak karena salah pilih outlet.
-      const finishLogin = (user) => {
+      const branchErrorFor = (user) => {
         const isOwner = user.role === 'Owner';
         const ownBranchId = user.branchId;
-
         // Pegawai (bukan Owner) hanya boleh login di cabang yang memang jadi tempatnya.
         // (Kalau daftar cabang gagal dimuat sama sekali, pemeriksaan ini dilewati
         // supaya pegawai tidak terkunci di luar hanya karena daftarnya kosong.)
         if (!isOwner && ownBranchId && branches.length > 0 && branchId !== ownBranchId) {
           const ownBranch = branches.find(b => b.ID === ownBranchId);
-          setError(`Akun ini terdaftar di outlet "${ownBranch ? ownBranch.Name : ownBranchId}". Silakan pilih outlet tersebut untuk masuk.`);
-          return false;
+          return `Akun ini terdaftar di outlet "${ownBranch ? ownBranch.Name : ownBranchId}". Silakan pilih outlet tersebut untuk masuk.`;
         }
+        return '';
+      };
+
+      const finishLogin = (user) => {
+        const ownBranchId = user.branchId;
+        const branchErr = branchErrorFor(user);
+        if (branchErr) { setError(branchErr); return false; }
 
         const selectedBranch = branches.find(b => b.ID === branchId);
         onLogin(user, selectedBranch ? { ID: selectedBranch.ID, Name: selectedBranch.Name } : { ID: ownBranchId || 'BR001', Name: 'Cabang Utama' });
         return true;
+      };
+
+      // Setelah login dengan PASSWORD berhasil: kasir yang belum punya PIN di tablet ini
+      // ditawari membuat PIN dulu (bisa dilewati), baru masuk.
+      const proceedAfterPassword = async (uname, user) => {
+        const branchErr = branchErrorFor(user);
+        if (branchErr) { setError(branchErr); return; }
+        if (pinEligible(user)) {
+          let needs = forcePinSetup;
+          if (!needs) { try { needs = !(await hasPin(uname)); } catch (e) { needs = false; } }
+          if (needs) { setPinSetup({ uname: uname, user: user }); setNewPin(''); setNewPin2(''); return; }
+        }
+        finishLogin(user);
+      };
+
+      const handleSavePin = async (e) => {
+        e.preventDefault();
+        if (!pinFormatOk(newPin)) { setError('PIN harus 4 sampai 6 angka.'); return; }
+        if (newPin !== newPin2) { setError('Kedua PIN tidak sama.'); return; }
+        try { await savePin(pinSetup.uname, newPin, pinSetup.user); } catch (err) { /* PIN hanya kemudahan; tetap masuk */ }
+        const u = pinSetup.user;
+        setPinSetup(null);
+        setForcePinSetup(false);
+        finishLogin(u);
+      };
+
+      const handleSkipPin = () => {
+        const u = pinSetup.user;
+        setPinSetup(null);
+        setForcePinSetup(false);
+        finishLogin(u);
+      };
+
+      const handlePinLogin = async (e) => {
+        e.preventDefault();
+        if (!pinUser) { setError('Pilih nama Anda dulu.'); return; }
+        if (!pinFormatOk(pinValue)) { setError('Masukkan PIN 4 sampai 6 angka.'); return; }
+        setLoading(true);
+        setError('');
+        const res = await loginWithPin(pinUser, pinValue);
+        setLoading(false);
+        setPinValue('');
+        if (res.ok) {
+          finishLogin(res.user);
+          return;
+        }
+        const goPassword = (msg) => { setError(msg); listPinAccounts().then(setPinAccounts).catch(() => {}); setPinUser(''); };
+        if (res.reason === 'wrong') setError(`PIN salah. Sisa percobaan: ${res.left}.`);
+        else if (res.reason === 'wiped') goPassword('PIN salah 5 kali, jadi dihapus demi keamanan. Masuk dengan password untuk membuat PIN baru.');
+        else if (res.reason === 'expired') setError('PIN perlu dikonfirmasi ulang lewat internet (sudah lebih dari 30 hari). Sambungkan internet lalu coba lagi, atau masuk dengan password.');
+        else if (res.reason === 'gone') goPassword('Akun ini sudah tidak terdaftar. Hubungi Owner.');
+        else if (res.reason === 'role') goPassword('Peran akun ini berubah. Masuk dengan password.');
+        else if (res.reason === 'unsupported') setError('Browser ini tidak mendukung login PIN. Masuk dengan password.');
+        else goPassword('PIN tidak ditemukan. Masuk dengan password.');
       };
 
       const handleLogin = async (e) => {
@@ -1850,7 +2033,7 @@
             // Simpan sidik jari password di tablet ini (tanpa menunggu) supaya lain
             // kali bisa login walau internet mati.
             saveOfflineLogin(uname, password, res.user);
-            finishLogin(res.user);
+            await proceedAfterPassword(uname, res.user);
           } else {
             // Server menyatakan akun/password tidak valid -> cabut izin login offline
             // akun ini di perangkat ini (misal password sudah diganti Owner).
@@ -1868,7 +2051,7 @@
             // pernah login online di perangkat ini).
             const offline = await verifyOfflineLogin(uname, password);
             if (offline.ok) {
-              finishLogin(offline.user);
+              await proceedAfterPassword(uname, offline.user);
             } else if (offline.reason === 'locked') {
               setError(`Terlalu banyak percobaan salah. Coba lagi dalam ${offline.waitSec} detik.`);
             } else if (offline.reason === 'wrong') {
@@ -1884,6 +2067,20 @@
         setLoading(false);
       };
 
+      const visiblePinAccounts = pinAccounts.filter(a => !a.branchId || !branchId || a.branchId === branchId);
+
+      const outletField = branches.length > 1 ? (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Outlet</label>
+          <div className="relative">
+            <i className="fa-solid fa-store absolute left-3 top-3.5 text-gray-400"></i>
+            <select value={branchId} onChange={e => setBranchId(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white appearance-none">
+              {branches.map(b => <option key={b.ID} value={b.ID}>{b.Name}</option>)}
+            </select>
+          </div>
+        </div>
+      ) : null;
+
       return (
         <div className="min-h-screen overflow-y-auto flex items-start sm:items-center justify-center bg-slate-100 p-4 py-8 sm:py-10">
           <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-200 my-auto">
@@ -1895,18 +2092,43 @@
               <p className="text-gray-500 text-sm mt-1">Masuk untuk memulai sesi Anda</p>
             </div>
             {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-4 text-sm text-center font-semibold border border-red-100">{error}</div>}
-            <form onSubmit={handleLogin} className="space-y-4">
-              {branches.length > 1 && (
+            {pinSetup ? (
+              <form onSubmit={handleSavePin} className="space-y-4">
+                <p className="text-sm text-gray-600 text-center">Halo, <span className="font-bold text-gray-800">{pinSetup.user.name || pinSetup.uname}</span>. Buat PIN 4-6 angka supaya lain kali cukup pilih nama dan masukkan PIN. PIN hanya berlaku di tablet ini.</p>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Outlet</label>
-                  <div className="relative">
-                    <i className="fa-solid fa-store absolute left-3 top-3.5 text-gray-400"></i>
-                    <select value={branchId} onChange={e => setBranchId(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white appearance-none">
-                      {branches.map(b => <option key={b.ID} value={b.ID}>{b.Name}</option>)}
-                    </select>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">PIN baru</label>
+                  <input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6} value={newPin} onChange={e => setNewPin(e.target.value.replace(/[^0-9]/g, ''))} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-center text-xl font-bold" autoFocus />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Ulangi PIN</label>
+                  <input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6} value={newPin2} onChange={e => setNewPin2(e.target.value.replace(/[^0-9]/g, ''))} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-center text-xl font-bold" />
+                </div>
+                <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-lg transition-all">Simpan PIN & Masuk</button>
+                <button type="button" onClick={handleSkipPin} className="w-full text-sm text-gray-500 py-2">Lewati, masuk tanpa PIN</button>
+              </form>
+            ) : (mode === 'pin' && visiblePinAccounts.length > 0) ? (
+              <form onSubmit={handlePinLogin} className="space-y-4">
+                {outletField}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Pilih nama Anda</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {visiblePinAccounts.map(a => (
+                      <button type="button" key={a.username} onClick={() => { setPinUser(a.username); setPinValue(''); setError(''); }} className={`px-3 py-3 rounded-lg border text-sm font-bold truncate ${pinUser === a.username ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-300 hover:border-indigo-400'}`}>{a.name}</button>
+                    ))}
                   </div>
                 </div>
-              )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">PIN</label>
+                  <input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6} value={pinValue} onChange={e => setPinValue(e.target.value.replace(/[^0-9]/g, ''))} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-center text-xl font-bold" />
+                </div>
+                <button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-lg flex justify-center items-center gap-2 transition-all">
+                  {loading ? <div className="loader border-white border-t-indigo-600"></div> : <span>Masuk</span>}
+                </button>
+                <button type="button" onClick={() => { setMode('password'); setForcePinSetup(true); setError(''); }} className="w-full text-sm text-indigo-600 hover:text-indigo-800 py-2">Lupa PIN / masuk dengan password</button>
+              </form>
+            ) : (
+            <form onSubmit={handleLogin} className="space-y-4">
+              {outletField}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
                 <div className="relative">
@@ -1924,7 +2146,11 @@
               <button type="submit" disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-lg flex justify-center items-center gap-2 mt-6 transition-all duration-300 shadow-lg shadow-indigo-200">
                 {loading ? <div className="loader border-white border-t-indigo-600"></div> : <span>Masuk Aplikasi</span>}
               </button>
+              {visiblePinAccounts.length > 0 && (
+                <button type="button" onClick={() => { setMode('pin'); setForcePinSetup(false); setError(''); }} className="w-full text-sm text-indigo-600 hover:text-indigo-800 py-2">Kembali masuk dengan PIN</button>
+              )}
             </form>
+            )}
           </div>
         </div>
       );
