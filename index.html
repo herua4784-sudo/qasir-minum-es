@@ -8709,7 +8709,10 @@
           return [...prev, {
             cartId,
             ID: product.ID,
-            Name: product.Name + (isJumbo ? ' (Jumbo)' : ' (Medium)'),
+            // Topping/Tambahan tidak punya ukuran: tanpa keterangan (Medium) di nama. Label
+            // ukuran hanya dipakai kalau produk memang punya dua varian (Medium & Jumbo).
+            // (Server menentukan Medium/Jumbo dari cartId, bukan dari nama, jadi aman.)
+            Name: product.Name + ((isAddOn && !(Number(product.Price) > 0 && Number(product.Harga_Jumbo) > 0)) ? '' : (isJumbo ? ' (Jumbo)' : ' (Medium)')),
             Category: product.Category,
             Price: price,
             Discount: disc,
