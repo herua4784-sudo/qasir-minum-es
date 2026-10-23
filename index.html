@@ -6731,94 +6731,17 @@
     }
 
     // ==========================================
-    // PRODUK TERLARIS: dihitung dari penjualan di tablet ini (30 hari terakhir) dan
-    // disimpan di penyimpanan lokal per outlet. Dicatat setiap pembayaran berhasil
-    // (termasuk saat offline). Tidak membebani server.
+    // FAVORITE: menu yang DISEMATKAN sendiri oleh Owner/Administrator/Rekan Bisnis (bukan
+    // dihitung otomatis). Daftarnya (urutan ID produk) disimpan di Pengaturan server dengan
+    // kunci per outlet, jadi sama di semua tablet outlet itu, dan ikut tersimpan untuk offline.
     // ==========================================
-    const TOP_DAYS = 30;
-    const topSalesKey = (branchId) => 'qasir_top_products_' + (branchId || 'BR001');
-    const topDayKey = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-    function loadTopSales(branchId) {
-      try { const v = JSON.parse(localStorage.getItem(topSalesKey(branchId)) || '{}'); return (v && typeof v === 'object') ? v : {}; } catch (e) { return {}; }
-    }
-    const topServerKey = (branchId) => 'qasir_top_server_' + (branchId || 'BR001');
-    const topDeltaKey = (branchId) => 'qasir_top_delta_' + (branchId || 'BR001');
-    function loadTopServer(branchId) {
-      try { const v = JSON.parse(localStorage.getItem(topServerKey(branchId)) || 'null'); return (v && v.totals) ? v : null; } catch (e) { return null; }
-    }
-    function loadTopDelta(branchId) {
-      try { const v = JSON.parse(localStorage.getItem(topDeltaKey(branchId)) || '{}'); return (v && typeof v === 'object') ? v : {}; } catch (e) { return {}; }
-    }
-    // Ambil jumlah terjual GABUNGAN semua tablet dari server (30 hari). Ditambah transaksi di
-    // antrian offline tablet ini yang belum sampai ke server, supaya tidak terhitung kurang.
-    async function refreshTopFromServer(branchId) {
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+    // Satu daftar per outlet: kunci FAVORITE_PRODUCTS_<ID outlet>.
+    const favoriteKeyFor = (branchId) => 'FAVORITE_PRODUCTS_' + (branchId || 'BR001');
+    function parseFavoriteIds(raw) {
       try {
-        const res = await Promise.race([
-          runGoogleScriptRaw('getTopProducts', branchId || 'BR001'),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
-        ]);
-        if (!res || !res.totals || typeof res.totals !== 'object') return false;
-        const totals = Object.assign({}, res.totals);
-        try {
-          const queued = await queueGetAllWrites();
-          (queued || []).forEach(function (q) {
-            if (q.functionName !== 'saveTransaction' || !q.args) return;
-            if ((q.args[8] || 'BR001') !== (branchId || 'BR001')) return;
-            (Array.isArray(q.args[4]) ? q.args[4] : []).forEach(function (i) {
-              if (i && i.ID) totals[i.ID] = (totals[i.ID] || 0) + (Number(i.qty) || 0);
-            });
-          });
-        } catch (e) {}
-        localStorage.setItem(topServerKey(branchId), JSON.stringify({ totals: totals, at: Date.now() }));
-        localStorage.setItem(topDeltaKey(branchId), '{}');
-        return true;
-      } catch (e) { return false; }
-    }
-    function recordTopSales(branchId, items) {
-      try {
-        if (loadTopServer(branchId)) {
-          const delta = loadTopDelta(branchId);
-          (items || []).forEach(function (i) { if (i && i.ID) delta[i.ID] = (delta[i.ID] || 0) + (Number(i.qty) || 0); });
-          localStorage.setItem(topDeltaKey(branchId), JSON.stringify(delta));
-        }
-      } catch (e) {}
-      try {
-        const days = loadTopSales(branchId);
-        const today = topDayKey(new Date());
-        const day = days[today] || {};
-        (items || []).forEach(function (i) { if (i && i.ID) day[i.ID] = (day[i.ID] || 0) + (Number(i.qty) || 0); });
-        days[today] = day;
-        const cutoff = topDayKey(new Date(Date.now() - TOP_DAYS * 24 * 60 * 60 * 1000));
-        Object.keys(days).forEach(function (k) { if (k < cutoff) delete days[k]; });
-        localStorage.setItem(topSalesKey(branchId), JSON.stringify(days));
-      } catch (e) { /* penyimpanan lokal tidak tersedia: fitur ini hanya pelengkap */ }
-    }
-    // Total terjual per produk (30 hari terakhir).
-    function topProductTotals(branchId) {
-      // Kalau sudah pernah mengambil data gabungan semua tablet dari server, pakai itu
-      // (ditambah penjualan di tablet ini sesudahnya). Kalau belum, pakai hitungan lokal.
-      const snap = loadTopServer(branchId);
-      if (snap) {
-        const merged = Object.assign({}, snap.totals);
-        const delta = loadTopDelta(branchId);
-        Object.keys(delta).forEach(function (id) { merged[id] = (merged[id] || 0) + delta[id]; });
-        return merged;
-      }
-      const days = loadTopSales(branchId);
-      const cutoff = topDayKey(new Date(Date.now() - TOP_DAYS * 24 * 60 * 60 * 1000));
-      const totals = {};
-      Object.keys(days).forEach(function (k) {
-        if (k < cutoff) return;
-        Object.keys(days[k]).forEach(function (id) { totals[id] = (totals[id] || 0) + days[k][id]; });
-      });
-      return totals;
-    }
-    // ID produk, terlaris dulu.
-    function topProductIds(branchId) {
-      const totals = topProductTotals(branchId);
-      return Object.keys(totals).filter(function (id) { return totals[id] > 0; })
-        .sort(function (a, b) { return totals[b] - totals[a] || (a < b ? -1 : 1); });
+        const v = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw;
+        return Array.isArray(v) ? v.map(String).filter((x, i, arr) => x && arr.indexOf(x) === i) : [];
+      } catch (e) { return []; }
     }
 
     // --- RIWAYAT TRANSAKSI VIEW (STANDAR TANPA DUPLIKAT) ---
@@ -8883,20 +8806,34 @@
 
     function POSView({ user, branch, settings }) {
       const [products, setProducts] = useState([]);
-      const [topIds, setTopIds] = useState(() => topProductIds(branch ? branch.ID : 'BR001'));
-      const [topTotals, setTopTotals] = useState(() => topProductTotals(branch ? branch.ID : 'BR001'));
-      const [showTop, setShowTop] = useState(false); // true: grid hanya menampilkan produk terlaris
-      const refreshTopNow = () => {
-        const bId = branch ? branch.ID : 'BR001';
-        refreshTopFromServer(bId).then(okk => {
-          if (okk) { setTopIds(topProductIds(bId)); setTopTotals(topProductTotals(bId)); }
+      const isManagerRole = !!user && (user.role === 'Owner' || user.role === 'Administrator' || user.role === 'Rekan Bisnis');
+      const favKey = favoriteKeyFor(branch ? branch.ID : 'BR001');
+      const [favIds, setFavIds] = useState(() => parseFavoriteIds(settings && settings[favKey]));
+      const [showFav, setShowFav] = useState(false); // true: grid hanya menampilkan menu Favorite
+      // Ambil daftar Favorite terbaru dari server (kalau offline: pakai simpanan terakhir).
+      const refreshFavorites = () => {
+        runGoogleScript('getSettings').then(s => { if (s) setFavIds(parseFavoriteIds(s[favKey])); }).catch(() => {});
+      };
+      useEffect(() => { setFavIds(parseFavoriteIds(settings && settings[favKey])); }, [favKey, settings && settings[favKey]]);
+      useEffect(() => { setShowFav(false); refreshFavorites(); }, [favKey]);
+      const saveFavorites = (next) => {
+        const prev = favIds;
+        setFavIds(next);
+        runGoogleScript('saveSetting', favKey, JSON.stringify(next)).then(res => {
+          if (res && res.success === false) throw new Error('ditolak');
+        }).catch(() => {
+          setFavIds(prev);
+          notify.alert('Favorite gagal disimpan. Pastikan tablet online lalu coba lagi.', 'Gagal Menyimpan', 'error');
         });
       };
-      useEffect(() => {
-        refreshTopNow();
-        const t = setInterval(refreshTopNow, 120000);
-        return () => clearInterval(t);
-      }, []);
+      const toggleFavorite = (id) => saveFavorites(favIds.indexOf(id) !== -1 ? favIds.filter(x => x !== id) : favIds.concat([id]));
+      const moveFavoriteEarlier = (id) => {
+        const i = favIds.indexOf(id);
+        if (i <= 0) return;
+        const next = favIds.slice();
+        next[i - 1] = id; next[i] = favIds[i - 1];
+        saveFavorites(next);
+      };
       const [categories, setCategories] = useState([]);
       const [loading, setLoading] = useState(true);
       const [filterCat, setFilterCat] = useState('Semua');
@@ -9130,9 +9067,6 @@
               offlineQueued: res.offlineQueued || false
             };
             setLastTrx(newTrx);
-            recordTopSales(branch ? branch.ID : 'BR001', cart);
-            setTopIds(topProductIds(branch ? branch.ID : 'BR001'));
-            setTopTotals(topProductTotals(branch ? branch.ID : 'BR001'));
             if (getPrintPrefs().method === 'rawbt' && getPrintPrefs().auto) setTimeout(() => printReceipt(newTrx, settings), 150);
 
             // Pengurangan stok bahan baku dijalankan di LATAR BELAKANG, sengaja TIDAK
@@ -9158,9 +9092,9 @@
         setProcessing(false);
       };
 
-      const displayedProducts = showTop
-        // Mode "Terlaris": semua produk yang pernah terjual, urut dari yang paling laku.
-        ? topIds
+      const displayedProducts = showFav
+        // Mode "Favorite": hanya menu yang disematkan, urut sesuai susunan yang diatur.
+        ? favIds
             .map(id => products.find(p => p.ID === id))
             .filter(p => p && (Number(p.Price) > 0 || Number(p.Harga_Jumbo) > 0)
               && (!searchQuery.trim() || p.Name.toLowerCase().includes(searchQuery.trim().toLowerCase())))
@@ -9170,12 +9104,7 @@
             const hasPricing = Number(p.Price) > 0 || Number(p.Harga_Jumbo) > 0;
             return matchCat && matchSearch && hasPricing;
           });
-
-      // Maksimal 6 produk terlaris (semua kategori, termasuk Topping & Tambahan).
-      const topProducts = topIds
-        .map(id => products.find(p => p.ID === id))
-        .filter(p => p && (Number(p.Price) > 0 || Number(p.Harga_Jumbo) > 0))
-        .slice(0, 6);
+      const hasAnyFavorite = favIds.some(id => products.some(p => p.ID === id));
 
       return (
         <div className="flex h-full relative">
@@ -9218,17 +9147,15 @@
               </button>
             </div>
 
-            {/* Dropdown kategori + produk terlaris */}
+            {/* Dropdown kategori + tombol Favorite */}
             <div className="mb-4 flex items-center gap-2">
-              <select value={showTop ? '__top' : filterCat} onChange={e => { setShowTop(false); setFilterCat(e.target.value); }} className="px-3 py-2.5 border rounded-xl text-sm font-bold bg-white flex-shrink-0 sm:min-w-[200px]">
-                {showTop && <option value="__top" disabled>Terlaris</option>}
+              <select value={showFav ? '__fav' : filterCat} onChange={e => { setShowFav(false); setFilterCat(e.target.value); }} className="px-3 py-2.5 border rounded-xl text-sm font-bold bg-white flex-shrink-0 sm:min-w-[200px]">
+                {showFav && <option value="__fav" disabled>Favorite</option>}
                 <option value="Semua">Semua Kategori</option>
                 {categories.map(c => <option key={c.ID} value={c.Name}>{c.Name}</option>)}
               </select>
-              {topProducts.length > 0 && (
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <button type="button" onClick={() => { if (!showTop) refreshTopNow(); setShowTop(v => !v); }} title="Tampilkan semua produk terlaris" className={'flex-shrink-0 text-xs font-bold whitespace-nowrap px-3 py-2 rounded-xl border ' + (showTop ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-600 border-amber-200')}><i className="fa-solid fa-fire mr-1"></i>Terlaris{showTop ? ' (tutup)' : ''}</button>
-                  </div>
+              {(hasAnyFavorite || isManagerRole) && (
+                <button type="button" onClick={() => { if (!showFav) refreshFavorites(); setShowFav(v => !v); }} title="Tampilkan menu Favorite" className={'flex-shrink-0 text-xs font-bold whitespace-nowrap px-3 py-2 rounded-xl border ' + (showFav ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-600 border-amber-200')}><i className="fa-solid fa-star mr-1"></i>Favorite{showFav ? ' (tutup)' : ''}</button>
               )}
             </div>
           </div>
@@ -9237,11 +9164,25 @@
             {loading ? (
               <div className="text-center py-16 text-gray-400"><i className="fa-solid fa-spinner fa-spin text-3xl"></i></div>
             ) : displayedProducts.length === 0 ? (
-              <div className="text-center py-16 text-gray-400">{showTop ? 'Belum ada data penjualan di tablet ini.' : 'Tidak ada produk di kategori ini.'}</div>
+              <div className="text-center py-16 text-gray-400">{showFav ? (isManagerRole ? 'Belum ada menu Favorite. Tutup tampilan ini, lalu tekan ikon bintang di pojok menu untuk menyematkannya.' : 'Belum ada menu Favorite.') : 'Tidak ada produk di kategori ini.'}</div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
                 {displayedProducts.map((p, idx) => (
                   <button key={p.ID} onClick={() => handleProductClick(p)} className="relative bg-white rounded-xl border overflow-hidden text-center hover:shadow-md hover:border-indigo-300 transition-all">
+                    {isManagerRole && (
+                      <span role="button" title={favIds.indexOf(p.ID) !== -1 ? 'Lepas dari Favorite' : 'Sematkan ke Favorite'} onClick={(e) => { e.stopPropagation(); toggleFavorite(p.ID); }}
+                        style={{ position: 'absolute', top: '6px', right: '6px', zIndex: 1, width: '28px', height: '28px', boxShadow: '0 1px 4px rgba(0,0,0,.25)' }}
+                        className="flex items-center justify-center rounded-full bg-white border" >
+                        <i className={'fa-star text-sm ' + (favIds.indexOf(p.ID) !== -1 ? 'fa-solid text-amber-500' : 'fa-regular text-gray-400')}></i>
+                      </span>
+                    )}
+                    {isManagerRole && showFav && idx > 0 && (
+                      <span role="button" title="Geser ke depan" onClick={(e) => { e.stopPropagation(); moveFavoriteEarlier(p.ID); }}
+                        style={{ position: 'absolute', top: '6px', left: '6px', zIndex: 1, width: '28px', height: '28px', boxShadow: '0 1px 4px rgba(0,0,0,.25)' }}
+                        className="flex items-center justify-center rounded-full bg-white border" >
+                        <i className="fa-solid fa-arrow-left text-sm text-gray-500"></i>
+                      </span>
+                    )}
                     <div className="aspect-square bg-slate-50 overflow-hidden flex items-center justify-center">
                       {p.Image_URL ? (
                         <CachedImg url={p.Image_URL} size={200} alt={p.Name} className="h-full w-full object-cover" />
