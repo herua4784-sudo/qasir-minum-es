@@ -62,6 +62,20 @@
     // 4. Tempel URL itu di bawah ini, lalu deploy ulang Index.html ke GitHub Pages
     const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbykq9jikOTBR5z6whSZg_p8u6Gq8GW0j0Obz0zWq_UE0HKKqrdUB3fU9YlpOXymvQxB/exec';
 
+    // Token sesi dari server (diberikan saat login). Dibawa di setiap permintaan; server
+    // memeriksanya. Sengaja DISIMPAN terus walau kasir logout, supaya data antrian offline
+    // tetap bisa terkirim. Server menolak kalau sudah kedaluwarsa (30 hari) / password diganti.
+    const AUTH_TOKEN_KEY = 'qasir_auth_token';
+    const getAuthToken = () => { try { return localStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch (e) { return ''; } };
+    const setAuthToken = (t) => { try { if (t) localStorage.setItem(AUTH_TOKEN_KEY, t); } catch (e) {} };
+    let _authExpiredFired = false;
+    const notifyAuthExpired = () => {
+      if (_authExpiredFired) return;
+      _authExpiredFired = true;
+      setTimeout(() => { _authExpiredFired = false; }, 5000);
+      try { window.dispatchEvent(new Event('qasir-auth-expired')); } catch (e) {}
+    };
+
     const runGoogleScriptRaw = (functionName, ...args) => {
       // Dijalankan DARI DALAM Google Apps Script (dibuka lewat script.google.com) —
       // tetap pakai google.script.run seperti sebelumnya, tidak ada yang berubah
@@ -93,13 +107,16 @@
       return fetch(GAS_WEB_APP_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ fn: functionName, args: args })
+        body: JSON.stringify(functionName === 'renewSession'
+          ? { fn: functionName, args: [], token: String(args[0] || '') }
+          : { fn: functionName, args: args, token: getAuthToken() })
       })
         .then(res => res.json())
         .then(result => {
           if (result && typeof result === 'object' && result !== null && result.__error) {
             const serverErr = new Error(result.__error);
             serverErr.serverError = true; // tandai: ini ditolak/gagal di SERVER, bukan putus koneksi
+            if (result.__auth) { serverErr.authError = true; notifyAuthExpired(); } // token sesi ditolak server
             throw serverErr;
           }
           return result;
@@ -294,7 +311,7 @@
               // Sama seperti alur online: gagal potong stok karena server (misal resep
               // bermasalah) hanya dicatat, tidak menggagalkan transaksinya. Kalau
               // karena koneksi, lempar lagi supaya diulang nanti.
-              if (!(deductErr && deductErr.serverError)) throw deductErr;
+              if (!(deductErr && deductErr.serverError) || deductErr.authError) throw deductErr;
               console.warn('[Sinkron] Potong stok gagal di server:', deductErr);
             }
           }
@@ -307,6 +324,11 @@
           const msg = item.functionName + ': ' + (err && err.message ? err.message : String(err));
           window.__lastSyncError = msg;
           console.warn('[Sinkron] Gagal:', msg);
+          if (err && err.authError) {
+            // Sesi login habis: data TETAP di antrian (tidak dihitung gagal), dikirim setelah login ulang saat online.
+            window.__lastSyncError = 'Sesi login berakhir. Login ulang saat online agar data terkirim.';
+            break;
+          }
           if (err && err.serverError) {
             item.attempts = (item.attempts || 0) + 1;
             item.lastError = msg;
@@ -1648,6 +1670,7 @@
       useEffect(() => {
         const session = loadSession();
         if (session) {
+          if (session.user && session.user.token) setAuthToken(session.user.token);
           setUser(session.user);
           setBranch(session.branch);
           preloadMenuData(session.branch ? session.branch.ID : 'BR001', session.user && session.user.role);
@@ -1656,6 +1679,7 @@
       }, []);
 
       const handleLoginSuccess = (u, b) => {
+        if (u && u.token) setAuthToken(u.token);
         setUser(u);
         setBranch(b);
         saveSession(u, b);
@@ -1737,6 +1761,22 @@
       const closeAlert = () => {
         setAlertConfig(prev => ({ ...prev, isOpen: false }));
       };
+
+      // Server menolak token sesi (kedaluwarsa / password diganti / akun dihapus): minta
+      // login ulang. Data antrian offline tetap aman dan terkirim setelah login ulang.
+      const userForAuthRef = useRef(null);
+      userForAuthRef.current = user;
+      useEffect(() => {
+        const onAuthExpired = () => {
+          if (!userForAuthRef.current) return;
+          setUser(null);
+          setBranch(null);
+          clearSession();
+          triggerAlert('Sesi login Anda sudah berakhir atau password diganti. Silakan login ulang (data yang menunggu sinkron tetap aman).', 'Login Ulang', 'info');
+        };
+        window.addEventListener('qasir-auth-expired', onAuthExpired);
+        return () => window.removeEventListener('qasir-auth-expired', onAuthExpired);
+      }, []);
 
       const notificationAPI = {
         alert: triggerAlert,
@@ -2076,7 +2116,7 @@
         const key = String(acc.username).trim().toLowerCase();
         const serverHash = String(acc.passwordHash || '').trim().toLowerCase();
         if (!key || !/^[0-9a-f]{64}$/.test(serverHash)) continue;
-        await writeOfflineAuthRecord(key, serverHash, { username: acc.username, role: acc.role, name: acc.name, branchId: acc.branchId || '' }, 'sha256');
+        await writeOfflineAuthRecord(key, serverHash, { username: acc.username, role: acc.role, name: acc.name, branchId: acc.branchId || '', token: acc.token || undefined }, 'sha256');
         keep[key] = true;
         names.push(acc.name || acc.username);
       }
@@ -2206,17 +2246,35 @@
     }
 
     // Tanya server apakah akun masih ada. 'unreachable' = tidak bisa memastikan (offline/lambat).
-    async function confirmAccountOnline(username) {
+    // Memakai token tersimpan: server mengecek akun masih ada & password belum diganti,
+    // sekaligus menukar token dengan yang baru (sesi diperpanjang 30 hari).
+    // Status: ok | gone | reauth (token kedaluwarsa/password diganti) | notoken (data lama) | unreachable.
+    async function confirmAccountOnline(username, token) {
       if (typeof navigator !== 'undefined' && navigator.onLine === false) return { status: 'unreachable' };
+      if (!token) return { status: 'notoken' };
       try {
-        const list = await Promise.race([
-          runGoogleScriptRaw('getEmployees'),
+        const res = await Promise.race([
+          runGoogleScriptRaw('renewSession', token),
           new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
         ]);
-        if (!Array.isArray(list)) return { status: 'unreachable' };
-        const emp = list.find(e => String(e.Username).trim().toLowerCase() === username);
-        return emp ? { status: 'ok', emp: emp } : { status: 'gone' };
+        if (!res) return { status: 'unreachable' };
+        if (res.success && res.user) {
+          return { status: 'ok', token: res.token, emp: { Role: res.user.role, Name: res.user.name, Branch_ID: res.user.branchId } };
+        }
+        if (res.status === 'gone') return { status: 'gone' };
+        return { status: 'reauth' };
       } catch (e) { return { status: 'unreachable' }; }
+    }
+
+    // Simpan token baru ke catatan PIN & login offline akun ini (kalau ada).
+    async function refreshStoredToken(username, token) {
+      if (!token) return;
+      try {
+        for (const key of ['pin:' + username, 'auth:' + username]) {
+          const rec = await offlineCacheGet(key);
+          if (rec && rec.user) await offlineCacheSet(key, Object.assign({}, rec, { user: Object.assign({}, rec.user, { token: token }) }));
+        }
+      } catch (e) {}
     }
 
     // Hasil: { ok:true, user } atau { ok:false, reason:'unsupported'|'no-record'|'wrong'|'wiped'|'expired'|'gone'|'role', left? }
@@ -2240,7 +2298,8 @@
         return { ok: false, reason: 'wrong', left: PIN_MAX_FAILS - fails };
       }
 
-      const check = await confirmAccountOnline(username);
+      const check = await confirmAccountOnline(username, rec.user && rec.user.token);
+      if (check.status === 'reauth' || check.status === 'notoken') return { ok: false, reason: 'reauth' };
       if (check.status === 'gone') {
         await clearPin(username);
         await clearOfflineLogin(username);
@@ -2254,13 +2313,14 @@
           await clearPin(username);
           return { ok: false, reason: 'role' };
         }
-        user = Object.assign({}, rec.user, { role: role, name: check.emp.Name || rec.user.name });
+        user = Object.assign({}, rec.user, { role: role, name: check.emp.Name || rec.user.name, token: check.token || rec.user.token });
         if (check.emp.Branch_ID) user.branchId = check.emp.Branch_ID;
         verifiedAt = Date.now();
       } else if (Date.now() - verifiedAt > PIN_MAX_AGE_MS) {
         return { ok: false, reason: 'expired' };
       }
       await offlineCacheSet('pin:' + username, Object.assign({}, rec, { fails: 0, verifiedAt: verifiedAt, user: user }));
+      if (check.status === 'ok' && check.token) refreshStoredToken(username, check.token);
       return { ok: true, user: user };
     }
 
@@ -2327,6 +2387,7 @@
       const proceedAfterPassword = async (uname, user) => {
         const branchErr = branchErrorFor(user);
         if (branchErr) { setError(branchErr); return; }
+        if (user && user.token) { try { await refreshStoredToken(uname, user.token); } catch (e) {} }
         if (pinEligible(user)) {
           let needs = forcePinSetup;
           if (!needs) { try { needs = !(await hasPin(uname)); } catch (e) { needs = false; } }
@@ -2371,6 +2432,7 @@
         else if (res.reason === 'wiped') goPassword('PIN salah 5 kali, jadi dihapus demi keamanan. Masuk dengan password untuk membuat PIN baru.');
         else if (res.reason === 'expired') setError('PIN perlu dikonfirmasi ulang lewat internet (sudah lebih dari 30 hari). Sambungkan internet lalu coba lagi, atau masuk dengan password.');
         else if (res.reason === 'gone') goPassword('Akun ini sudah tidak terdaftar. Hubungi Owner.');
+        else if (res.reason === 'reauth') goPassword('Masuk dengan password sekali untuk memperbarui sesi (sesi lebih dari 30 hari, password diganti, atau pembaruan keamanan).');
         else if (res.reason === 'role') goPassword('Peran akun ini berubah. Masuk dengan password.');
         else if (res.reason === 'unsupported') setError('Browser ini tidak mendukung login PIN. Masuk dengan password.');
         else goPassword('PIN tidak ditemukan. Masuk dengan password.');
@@ -2386,8 +2448,10 @@
           if (res.success) {
             // Simpan sidik jari password di tablet ini (tanpa menunggu) supaya lain
             // kali bisa login walau internet mati.
-            saveOfflineLogin(uname, password, res.user);
-            await proceedAfterPassword(uname, res.user);
+            const loggedIn = res.token ? Object.assign({}, res.user, { token: res.token }) : res.user;
+            if (res.token) setAuthToken(res.token);
+            saveOfflineLogin(uname, password, loggedIn);
+            await proceedAfterPassword(uname, loggedIn);
           } else {
             // Server menyatakan akun/password tidak valid -> cabut izin login offline
             // akun ini di perangkat ini (misal password sudah diganti Owner).
@@ -6677,7 +6741,48 @@
     function loadTopSales(branchId) {
       try { const v = JSON.parse(localStorage.getItem(topSalesKey(branchId)) || '{}'); return (v && typeof v === 'object') ? v : {}; } catch (e) { return {}; }
     }
+    const topServerKey = (branchId) => 'qasir_top_server_' + (branchId || 'BR001');
+    const topDeltaKey = (branchId) => 'qasir_top_delta_' + (branchId || 'BR001');
+    function loadTopServer(branchId) {
+      try { const v = JSON.parse(localStorage.getItem(topServerKey(branchId)) || 'null'); return (v && v.totals) ? v : null; } catch (e) { return null; }
+    }
+    function loadTopDelta(branchId) {
+      try { const v = JSON.parse(localStorage.getItem(topDeltaKey(branchId)) || '{}'); return (v && typeof v === 'object') ? v : {}; } catch (e) { return {}; }
+    }
+    // Ambil jumlah terjual GABUNGAN semua tablet dari server (30 hari). Ditambah transaksi di
+    // antrian offline tablet ini yang belum sampai ke server, supaya tidak terhitung kurang.
+    async function refreshTopFromServer(branchId) {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+      try {
+        const res = await Promise.race([
+          runGoogleScriptRaw('getTopProducts', branchId || 'BR001'),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+        ]);
+        if (!res || !res.totals || typeof res.totals !== 'object') return false;
+        const totals = Object.assign({}, res.totals);
+        try {
+          const queued = await queueGetAllWrites();
+          (queued || []).forEach(function (q) {
+            if (q.functionName !== 'saveTransaction' || !q.args) return;
+            if ((q.args[8] || 'BR001') !== (branchId || 'BR001')) return;
+            (Array.isArray(q.args[4]) ? q.args[4] : []).forEach(function (i) {
+              if (i && i.ID) totals[i.ID] = (totals[i.ID] || 0) + (Number(i.qty) || 0);
+            });
+          });
+        } catch (e) {}
+        localStorage.setItem(topServerKey(branchId), JSON.stringify({ totals: totals, at: Date.now() }));
+        localStorage.setItem(topDeltaKey(branchId), '{}');
+        return true;
+      } catch (e) { return false; }
+    }
     function recordTopSales(branchId, items) {
+      try {
+        if (loadTopServer(branchId)) {
+          const delta = loadTopDelta(branchId);
+          (items || []).forEach(function (i) { if (i && i.ID) delta[i.ID] = (delta[i.ID] || 0) + (Number(i.qty) || 0); });
+          localStorage.setItem(topDeltaKey(branchId), JSON.stringify(delta));
+        }
+      } catch (e) {}
       try {
         const days = loadTopSales(branchId);
         const today = topDayKey(new Date());
@@ -6691,6 +6796,15 @@
     }
     // Total terjual per produk (30 hari terakhir).
     function topProductTotals(branchId) {
+      // Kalau sudah pernah mengambil data gabungan semua tablet dari server, pakai itu
+      // (ditambah penjualan di tablet ini sesudahnya). Kalau belum, pakai hitungan lokal.
+      const snap = loadTopServer(branchId);
+      if (snap) {
+        const merged = Object.assign({}, snap.totals);
+        const delta = loadTopDelta(branchId);
+        Object.keys(delta).forEach(function (id) { merged[id] = (merged[id] || 0) + delta[id]; });
+        return merged;
+      }
       const days = loadTopSales(branchId);
       const cutoff = topDayKey(new Date(Date.now() - TOP_DAYS * 24 * 60 * 60 * 1000));
       const totals = {};
@@ -8772,6 +8886,17 @@
       const [topIds, setTopIds] = useState(() => topProductIds(branch ? branch.ID : 'BR001'));
       const [topTotals, setTopTotals] = useState(() => topProductTotals(branch ? branch.ID : 'BR001'));
       const [showTop, setShowTop] = useState(false); // true: grid hanya menampilkan produk terlaris
+      const refreshTopNow = () => {
+        const bId = branch ? branch.ID : 'BR001';
+        refreshTopFromServer(bId).then(okk => {
+          if (okk) { setTopIds(topProductIds(bId)); setTopTotals(topProductTotals(bId)); }
+        });
+      };
+      useEffect(() => {
+        refreshTopNow();
+        const t = setInterval(refreshTopNow, 120000);
+        return () => clearInterval(t);
+      }, []);
       const [categories, setCategories] = useState([]);
       const [loading, setLoading] = useState(true);
       const [filterCat, setFilterCat] = useState('Semua');
@@ -9102,7 +9227,7 @@
               </select>
               {topProducts.length > 0 && (
                 <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <button type="button" onClick={() => setShowTop(v => !v)} title="Tampilkan semua produk terlaris" className={'flex-shrink-0 text-xs font-bold whitespace-nowrap px-3 py-2 rounded-xl border ' + (showTop ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-600 border-amber-200')}><i className="fa-solid fa-fire mr-1"></i>Terlaris{showTop ? ' (tutup)' : ''}</button>
+                  <button type="button" onClick={() => { if (!showTop) refreshTopNow(); setShowTop(v => !v); }} title="Tampilkan semua produk terlaris" className={'flex-shrink-0 text-xs font-bold whitespace-nowrap px-3 py-2 rounded-xl border ' + (showTop ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-600 border-amber-200')}><i className="fa-solid fa-fire mr-1"></i>Terlaris{showTop ? ' (tutup)' : ''}</button>
                   </div>
               )}
             </div>
