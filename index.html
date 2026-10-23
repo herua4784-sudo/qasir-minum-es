@@ -564,7 +564,8 @@
       // Selain itu: utamakan server; simpanan jadi cadangan kalau gagal/terlalu lama.
       let timer;
       const timeout = new Promise(function (_, reject) {
-        timer = setTimeout(function () { reject(new Error('Server terlalu lama merespons')); }, NETWORK_FIRST_TIMEOUT_MS);
+        // Riwayat transaksi lengkap bisa besar, beri waktu lebih lama dibanding data acuan.
+        timer = setTimeout(function () { reject(new Error('Server terlalu lama merespons')); }, functionName === 'getTransactions' ? 60000 : NETWORK_FIRST_TIMEOUT_MS);
       });
       timeout.catch(function () {});
       return Promise.race([fromServer, timeout]).then(
@@ -6752,6 +6753,7 @@
       const [startDate, setStartDate] = useState(() => new Date().toISOString().substring(0, 10));
       const [endDate, setEndDate] = useState(() => new Date().toISOString().substring(0, 10));
       const [branchList, setBranchList] = useState([]);
+      const [loadError, setLoadError] = useState('');
       const [viewBranchId, setViewBranchId] = useState(allowBranchFilter ? 'ALL' : (branch ? branch.ID : 'BR001'));
       const notify = useNotification();
 
@@ -6781,6 +6783,7 @@
 
       const loadData = () => {
         setLoading(true);
+        setLoadError('');
         if (limitToday && cashierName) {
           // Mode "Riwayat Hari Ini" milik kasir: pakai fungsi ringan yang sudah
           // menyaring tanggal & kasir DI SERVER, jadi tidak perlu transfer
@@ -6789,13 +6792,13 @@
           runGoogleScript('getTodayCashierTransactions', '', branchParam).then(data => {
             setTrx(data || []);
             setLoading(false);
-          }).catch(() => setLoading(false));
+          }).catch((err) => { setLoadError(String((err && err.message) || err || 'Gagal memuat')); setLoading(false); });
         } else {
           const branchParam = viewBranchId === 'ALL' ? undefined : viewBranchId;
           runGoogleScript('getTransactions', branchParam).then(data => {
             setTrx(data || []);
             setLoading(false);
-          }).catch(() => setLoading(false));
+          }).catch((err) => { setLoadError(String((err && err.message) || err || 'Gagal memuat')); setLoading(false); });
         }
       };
 
@@ -6899,7 +6902,13 @@
                   {loading ? (
                     <tr><td colSpan="7" className="p-12 text-center text-gray-400 font-bold text-xs"><i className="fa-solid fa-spinner fa-spin mr-1"></i>Memuat riwayat...</td></tr>
                   ) : timeFilteredTrx.length === 0 ? (
-                    <tr><td colSpan="7" className="p-12 text-center text-gray-400">Tidak ada riwayat transaksi ditemukan.</td></tr>
+                    <tr><td colSpan="7" className="p-12 text-center text-gray-400">
+                      {loadError ? (
+                        <span className="text-red-500 font-bold">Gagal memuat riwayat: {loadError}. Tekan tombol muat ulang di atas untuk mencoba lagi.</span>
+                      ) : trx.length > 0 ? (
+                        'Ada ' + trx.length + ' transaksi tersimpan, tetapi tidak ada yang cocok dengan periode yang dipilih. Coba pilih "Bulan Ini" atau "Pilih Tanggal".'
+                      ) : 'Tidak ada riwayat transaksi ditemukan.'}
+                    </td></tr>
                   ) : (
                     timeFilteredTrx.map((t, i) => (
                       <tr key={i} className="border-b hover:bg-gray-50">
@@ -8309,6 +8318,7 @@
     function ReportView({ forceDailyOnly, branch, allowBranchFilter }) {
       const [rawTrx, setRawTrx] = useState([]);
       const [loading, setLoading] = useState(true);
+      const [loadError, setLoadError] = useState('');
       const [timeFilter, setTimeFilter] = useState(forceDailyOnly ? 'Hari Ini' : 'Hari Ini');
       const [branchList, setBranchList] = useState([]);
       const [viewBranchId, setViewBranchId] = useState(allowBranchFilter ? 'ALL' : (branch ? branch.ID : 'BR001'));
@@ -8330,12 +8340,14 @@
 
       useEffect(() => {
         setLoading(true);
+        setLoadError('');
         const branchParam = viewBranchId === 'ALL' ? undefined : viewBranchId;
         cachedFetch('transactions_' + (branchParam || 'ALL'), () => runGoogleScript('getTransactions', branchParam)).then(data => {
           setRawTrx(data || []);
           setLoading(false);
         }).catch(err => {
           console.error("Gagal memuat transaksi untuk laporan:", err);
+          setLoadError(String((err && err.message) || err || 'Gagal memuat'));
           setLoading(false);
         });
       }, [viewBranchId]);
@@ -8506,6 +8518,8 @@
                 </button>
               </div>
               <p className="text-gray-500 text-sm mt-1 col">Pantau performa penjualan dan wawasan pintar dari gerai Anda.</p>
+              {loadError && <p className="text-red-500 text-xs font-bold mt-1">Gagal memuat data transaksi: {loadError}. Tekan tombol muat ulang.</p>}
+              {!loadError && !loading && rawTrx.length > 0 && stats.trxCount === 0 && <p className="text-amber-600 text-xs font-bold mt-1">Ada {rawTrx.length} transaksi tersimpan, tetapi tidak ada pada periode yang dipilih.</p>}
             </div>
             
             {!forceDailyOnly && (
