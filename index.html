@@ -8478,7 +8478,7 @@
           }
 
           return {
-            omzet, profit, trxCount, avgTrxValue, avgDailySales, 
+            omzet: Math.round(omzet), profit: Math.round(profit), trxCount, avgTrxValue: Math.round(avgTrxValue), avgDailySales: Math.round(avgDailySales), 
             busiestDay, busiestHourStr, topProductsList, aiTips
           };
         } catch (globalErr) {
