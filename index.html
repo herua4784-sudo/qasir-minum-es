@@ -8574,7 +8574,7 @@
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-l-4 border-l-emerald-500 relative overflow-hidden group">
                <i className="fa-solid fa-sack-dollar absolute right-4 top-6 text-5xl text-emerald-50 opacity-50"></i>
                <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Laba Bersih (Profit)</p>
-               <h3 className="text-3xl font-black text-emerald-600">Rp {stats.profit.toLocaleString('id-ID')}</h3>
+               <h3 className="text-3xl font-black text-emerald-600">Rp {Math.round(stats.profit).toLocaleString('id-ID')}</h3>
             </div>
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-l-4 border-l-purple-500 relative overflow-hidden group">
                <i className="fa-solid fa-receipt absolute right-4 top-6 text-5xl text-purple-50 opacity-50"></i>
