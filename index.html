@@ -5389,7 +5389,7 @@
           <div className="bg-white rounded-2xl border shadow-sm p-5 mb-5 flex items-center justify-between">
             <div>
               <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Total Modal Bulan Ini</p>
-              <p className="text-3xl font-bold text-gray-800 mt-1">Rp {grandTotal.toLocaleString('id-ID')}</p>
+              <p className="text-3xl font-bold text-gray-800 mt-1">Rp {Math.round(grandTotal).toLocaleString('id-ID')}</p>
             </div>
             <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center">
               <i className="fa-solid fa-sack-dollar text-2xl text-indigo-500"></i>
@@ -5420,10 +5420,10 @@
                         <td className="p-4 font-bold text-gray-800">{r.IngredientName}</td>
                         <td className="p-4 text-gray-600">{r.Qty} {r.Unit}</td>
                         <td className="p-4 text-gray-600">
-                          Rp {r.UnitCost.toLocaleString('id-ID')}
+                          Rp {Math.round(Number(r.UnitCost)).toLocaleString('id-ID')}
                           {r.IsCustomCost && <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700">LUAR GUDANG</span>}
                         </td>
-                        <td className="p-4 font-bold text-gray-700">Rp {r.Subtotal.toLocaleString('id-ID')}</td>
+                        <td className="p-4 font-bold text-gray-700">Rp {Math.round(r.Subtotal).toLocaleString('id-ID')}</td>
                       </tr>
                     ))
                   )}
@@ -5472,7 +5472,7 @@
             </div>
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-l-4 border-l-emerald-500">
               <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Estimasi Nilai Stok</p>
-              <h3 className="text-2xl font-black text-emerald-600">Rp {totalValue.toLocaleString('id-ID')}</h3>
+              <h3 className="text-3xl font-black text-emerald-600">Rp {Math.round(totalValue).toLocaleString('id-ID')}</h3>
             </div>
           </div>
 
@@ -5505,8 +5505,8 @@
                       return (
                         <tr key={ing.ID} className="border-b border-gray-50 hover:bg-slate-50">
                           <td className="p-4 font-bold text-gray-800">{ing.Name}</td>
-                          <td className="p-4 font-bold">{ing.Stock} {ing.Unit}</td>
-                          <td className="p-4 text-gray-500">{ing.Min_Stock || 0} {ing.Unit}</td>
+                          <td className="p-4 font-bold">{fmtInt(ing.Stock)} {ing.Unit}</td>
+                          <td className="p-4 text-gray-500">{fmtInt(ing.Min_Stock || 0)} {ing.Unit}</td>
                           <td className="p-4">
                             {isLow ? (
                               <span className="bg-red-100 text-red-600 text-xs font-bold px-2.5 py-1 rounded-full"><i className="fa-solid fa-triangle-exclamation mr-1"></i>Menipis</span>
@@ -5534,6 +5534,8 @@
     // Tab 2 dan 3 hanya untuk dibaca. Keduanya tetap jalan saat offline: data dari
     // simpanan lokal, dan catatan yang masih menunggu sinkron ikut diperhitungkan.
     // ==========================================
+    // Pembulatan penuh (tanpa angka di belakang koma) untuk layar Inventory milik Owner.
+    const fmtInt = (n) => Math.round(Number(n || 0)).toLocaleString('id-ID');
     const fmtQty = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
     // Memantau antrian offline: begitu isinya berubah (ada yang masuk, atau selesai
@@ -6282,7 +6284,7 @@
                             <i className={`fa-solid ${m.Type === 'Masuk' ? 'fa-arrow-down' : 'fa-arrow-up'} mr-1`}></i>{m.Type}
                           </span>
                         </td>
-                        <td className="p-4 font-bold text-gray-700">{m.Qty} {getIngredientUnit(m.Ingredient_ID)}</td>
+                        <td className="p-4 font-bold text-gray-700">{fmtInt(m.Qty)} {getIngredientUnit(m.Ingredient_ID)}</td>
                         <td className="p-4 text-gray-500">{m.Reason}{m.Reference ? <span className="text-[10px] text-gray-400 font-mono ml-1">({m.Reference})</span> : ''}</td>
                       </tr>
                     ))
