@@ -2908,7 +2908,7 @@
                       <MenuBtn icon="fa-clipboard-list" label="Ringkasan Stok" active={activeTab === 'inventory-ringkasan'} onClick={() => goTo('inventory-ringkasan')} dark small />
                       <MenuBtn icon="fa-dolly" label="Barang Masuk" active={activeTab === 'inventory-barang-masuk'} onClick={() => goTo('inventory-barang-masuk')} dark small />
                       <MenuBtn icon="fa-right-left" label="Catat Stok Masuk/Keluar" active={activeTab === 'inventory-catat'} onClick={() => goTo('inventory-catat')} dark small />
-                      <MenuBtn icon="fa-fire-burner" label="Produksi Batch (Racikan)" active={activeTab === 'inventory-produksi'} onClick={() => goTo('inventory-produksi')} dark small />
+                      <MenuBtn icon="fa-fire-burner" label="Produksi Batch (Opsional)" active={activeTab === 'inventory-produksi'} onClick={() => goTo('inventory-produksi')} dark small />
                       <MenuBtn icon="fa-clock-rotate-left" label="Riwayat Pergerakan" active={activeTab === 'inventory-riwayat'} onClick={() => goTo('inventory-riwayat')} dark small />
                       <MenuBtn icon="fa-sack-dollar" label="Laporan Pemakaian Bahan Baku" active={activeTab === 'inventory-laporan'} onClick={() => goTo('inventory-laporan')} dark small />
                     </div>
@@ -5272,7 +5272,8 @@
       return (
         <div className="p-6 h-full overflow-y-auto max-w-xl">
           <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800">Produksi Batch (Racikan)</h2>
+            <h2 className="text-2xl font-bold text-gray-800">Produksi Batch (Racikan) <span className="text-sm font-semibold text-indigo-500">Opsional</span></h2>
+            <p className="text-indigo-600 text-xs font-bold mt-1">Tidak wajib. Bahan racikan yang resep produksinya sudah diatur akan otomatis memakai bahan mentah setiap kali menu terjual, jadi karyawan tidak perlu membuat batch di aplikasi.</p>
             <p className="text-gray-500 text-sm mt-1">Masak/olah bahan mentah jadi bahan siap pakai, misal Daun Teh + Air jadi Air Teh Ori. Stok bahan mentah otomatis berkurang, stok hasil racikan otomatis bertambah.</p>
           </div>
 
@@ -5450,8 +5451,8 @@
       };
       useEffect(() => { loadData(); }, [branchId]);
 
-      const lowStockCount = ingredients.filter(i => Number(i.Stock) <= Number(i.Min_Stock || 0)).length;
-      const displayed = filterLow ? ingredients.filter(i => Number(i.Stock) <= Number(i.Min_Stock || 0)) : ingredients;
+      const lowStockCount = ingredients.filter(i => effStock(i) <= Number(i.Min_Stock || 0)).length;
+      const displayed = filterLow ? ingredients.filter(i => effStock(i) <= Number(i.Min_Stock || 0)) : ingredients;
       const totalValue = ingredients.reduce((sum, i) => sum + (Number(i.Stock) * Number(i.Cost_Per_Unit || 0)), 0);
 
       return (
@@ -5501,11 +5502,11 @@
                     <tr><td colSpan="4" className="p-12 text-center text-gray-400">Tidak ada data.</td></tr>
                   ) : (
                     displayed.map(ing => {
-                      const isLow = Number(ing.Stock) <= Number(ing.Min_Stock || 0);
+                      const isLow = effStock(ing) <= Number(ing.Min_Stock || 0);
                       return (
                         <tr key={ing.ID} className="border-b border-gray-50 hover:bg-slate-50">
-                          <td className="p-4 font-bold text-gray-800">{ing.Name}</td>
-                          <td className="p-4 font-bold">{fmtInt(ing.Stock)} {ing.Unit}</td>
+                          <td className="p-4 font-bold text-gray-800">{ing.Name}{isAutoOlahan(ing) && <span className="block text-[11px] font-semibold text-indigo-500">Racikan otomatis dari bahan mentah</span>}</td>
+                          <td className="p-4 font-bold">{fmtInt(effStock(ing))} {ing.Unit}</td>
                           <td className="p-4 text-gray-500">{fmtInt(ing.Min_Stock || 0)} {ing.Unit}</td>
                           <td className="p-4">
                             {isLow ? (
@@ -5534,6 +5535,9 @@
     // Tab 2 dan 3 hanya untuk dibaca. Keduanya tetap jalan saat offline: data dari
     // simpanan lokal, dan catatan yang masih menunggu sinkron ikut diperhitungkan.
     // ==========================================
+    // Stok yang ditampilkan: bahan olahan (racikan) otomatis = stok sendiri + yang bisa dibuat dari bahan mentah (Auto_Stock dari server).
+    const isAutoOlahan = (ing) => !!ing && ing.Auto_Stock !== undefined && ing.Auto_Stock !== null && ing.Auto_Stock !== '';
+    const effStock = (ing) => isAutoOlahan(ing) ? Number(ing.Auto_Stock) : Number(ing.Stock);
     // Pembulatan penuh (tanpa angka di belakang koma) untuk layar Inventory milik Owner.
     const fmtInt = (n) => Math.round(Number(n || 0)).toLocaleString('id-ID');
     const fmtQty = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
@@ -5792,7 +5796,7 @@
       });
       const rows = ingredients.map(ing => {
         const delta = deltaMap[ing.ID] || 0;
-        const stock = Math.round(((Number(ing.Stock) || 0) + delta) * 10000) / 10000;
+        const stock = Math.round(((effStock(ing) || 0) + delta) * 10000) / 10000;
         const min = Number(ing.Min_Stock) || 0;
         const conv = Number(ing.Purchase_Conversion) || 0;
         return {
@@ -5884,7 +5888,7 @@
                   ) : (
                     displayed.map(r => (
                       <tr key={r.ing.ID} className="border-b border-gray-50 hover:bg-slate-50">
-                        <td className="p-4 font-bold text-gray-800">{r.ing.Name}</td>
+                        <td className="p-4 font-bold text-gray-800">{r.ing.Name}{isAutoOlahan(r.ing) && <span className="block text-[11px] font-semibold text-indigo-500">Racikan otomatis dari bahan mentah</span>}</td>
                         <td className="p-4">
                           <span className="font-bold text-gray-800">{fmtQty(r.stock)} {r.ing.Unit}</span>
                           {r.purchaseEq !== null && (
