@@ -16,7 +16,7 @@
 
 // Naikkan angka versi ini SETIAP kali Index.html diperbarui, supaya tablet otomatis
 // mengunduh versi terbaru.
-const CACHE_NAME = 'qasir-minumes-v32';
+const CACHE_NAME = 'qasir-minumes-v34';
 
 // File milik aplikasi sendiri
 const APP_SHELL = [
