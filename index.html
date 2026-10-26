@@ -5443,6 +5443,7 @@
       const [ingredients, setIngredients] = useState([]);
       const [loading, setLoading] = useState(true);
       const [filterLow, setFilterLow] = useState(false);
+      const [search, setSearch] = useState('');
       const branchId = branch ? branch.ID : 'BR001';
 
       const loadData = () => {
@@ -5452,7 +5453,8 @@
       useEffect(() => { loadData(); }, [branchId]);
 
       const lowStockCount = ingredients.filter(i => effStock(i) <= Number(i.Min_Stock || 0)).length;
-      const displayed = filterLow ? ingredients.filter(i => effStock(i) <= Number(i.Min_Stock || 0)) : ingredients;
+      const searchQ = search.trim().toLowerCase();
+      const displayed = ingredients.filter(i => (!filterLow || effStock(i) <= Number(i.Min_Stock || 0)) && (!searchQ || String(i.Name || '').toLowerCase().includes(searchQ)));
       const totalValue = ingredients.reduce((sum, i) => sum + (Number(i.Stock) * Number(i.Cost_Per_Unit || 0)), 0);
 
       return (
@@ -5477,7 +5479,12 @@
             </div>
           </div>
 
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-4 mb-4 flex-wrap">
+            <div className="relative" style={{ width: '320px', maxWidth: '100%' }}>
+              <i className="fa-solid fa-magnifying-glass absolute left-3 text-gray-400 text-sm" style={{ top: '50%', transform: 'translateY(-50%)' }}></i>
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari bahan baku..." className="w-full pl-9 pr-9 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white" />
+              {search && <button onClick={() => setSearch('')} aria-label="Hapus pencarian" className="absolute right-2 text-gray-400 hover:text-gray-600 px-1" style={{ top: '50%', transform: 'translateY(-50%)' }}><i className="fa-solid fa-xmark"></i></button>}
+            </div>
             <label className="flex items-center gap-2 text-sm font-bold text-gray-700 cursor-pointer">
               <input type="checkbox" checked={filterLow} onChange={e => setFilterLow(e.target.checked)} className="w-4 h-4" />
               Tampilkan hanya yang stoknya menipis
@@ -9145,7 +9152,7 @@
               </div>
 
               <div className="flex-1 relative min-w-0">
-                <i className="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+                <i className="fa-solid fa-magnifying-glass absolute left-3 text-gray-400 text-sm" style={{ top: '50%', transform: 'translateY(-50%)' }}></i>
                 <input
                   type="text"
                   value={searchQuery}
