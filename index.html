@@ -2134,6 +2134,20 @@
           removed++;
         }
       }
+      // Tombol nama di layar login (login PIN) disimpan terpisah. Pegawai yang sudah tidak
+      // terdaftar di server juga dihapus dari sana, supaya namanya hilang dari layar login.
+      try {
+        for (const key of await pinIndexGet()) {
+          if (keep[key]) continue;
+          const prec = await offlineCacheGet('pin:' + key);
+          const pu = prec && prec.user;
+          const pcovered = !pu || (pu.role !== 'Owner' && pu.role !== 'Administrator' && pu.role !== 'Rekan Bisnis');
+          if (pcovered && (!pu || !pu.branchId || pu.branchId === branchId)) {
+            await clearPin(key);
+            removed++;
+          }
+        }
+      } catch (e) { /* PIN hanya kemudahan; abaikan kalau gagal */ }
       return { added: names.length, removed: removed, names: names };
     }
 
