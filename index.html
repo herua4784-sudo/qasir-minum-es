@@ -7139,8 +7139,6 @@
             <p className="text-gray-500 mb-8">Pilih tipe presensi Anda saat ini.</p>
             <div className="space-y-4">
               <button onClick={() => setShiftModalOpen(true)} disabled={loading} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-emerald-100 transition-colors flex items-center justify-center gap-2"><i className="fa-solid fa-right-to-bracket mr-2"></i>Mulai Shift</button>
-              <button onClick={() => handleAbsen('Break In')} disabled={loading} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-amber-100 transition-colors flex items-center justify-center gap-2"><i className="fa-solid fa-mug-saucer mr-2"></i>Mulai Istirahat</button>
-              <button onClick={() => handleAbsen('Break Out')} disabled={loading} className="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-sky-100 transition-colors flex items-center justify-center gap-2"><i className="fa-solid fa-arrow-rotate-left mr-2"></i>Selesai Istirahat</button>
               <button onClick={() => handleAbsen('Clock Out')} disabled={loading} className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-rose-100 transition-colors flex items-center justify-center gap-2"><i className="fa-solid fa-right-from-bracket mr-2"></i>Selesai Shift</button>
             </div>
           </div>
