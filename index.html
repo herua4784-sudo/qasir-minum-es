@@ -3764,7 +3764,27 @@
       const [accounts, setAccounts] = useState([]);
       const supported = offlineLoginAvailable();
 
-      const refreshAccounts = () => { listOfflineLoginAccounts().then(setAccounts).catch(() => {}); };
+      const notify = useNotification();
+      // Gabungan: akun login offline + nama tombol di layar login (PIN) yang tersimpan di tablet ini.
+      const refreshAccounts = async () => {
+        try {
+          const list = await listOfflineLoginAccounts();
+          const pins = await listPinAccounts();
+          pins.forEach(p => {
+            if (!list.some(a => a.username === p.username)) list.push({ username: p.username, name: p.name, role: p.role, branchId: p.branchId, pinOnly: true });
+          });
+          setAccounts(list);
+        } catch (e) {}
+      };
+      const handleRemoveAccount = (a) => {
+        if (a.role === 'Owner' || a.role === 'Administrator' || a.role === 'Rekan Bisnis') return;
+        notify.confirm(`Hapus "${a.name}" (${a.username}) dari tablet ini?\nNama dan PIN-nya hilang dari layar login tablet ini saja. Akun di Daftar Pegawai tidak ikut terhapus.`, async () => {
+          try { await clearOfflineLogin(a.username); } catch (e) {}
+          try { await clearPin(a.username); } catch (e) {}
+          setMessage({ type: 'ok', text: `"${a.name}" sudah dihapus dari tablet ini.` });
+          refreshAccounts();
+        });
+      };
 
       useEffect(() => {
         refreshAccounts();
@@ -3859,7 +3879,12 @@
                 {accounts.map(a => (
                   <div key={a.username} className="flex items-center justify-between text-sm bg-slate-50 rounded-lg px-3 py-2 gap-3">
                     <span className="font-semibold text-gray-700 truncate">{a.name} <span className="text-gray-400 font-normal">({a.username}) · {a.role}</span></span>
-                    <span className={`text-xs font-bold flex-shrink-0 ${a.expired ? 'text-red-500' : 'text-gray-400'}`}>{a.expired ? 'Kedaluwarsa' : 'sampai ' + fmtDate(a.validUntil)}</span>
+                    <span className="flex items-center gap-2 flex-shrink-0">
+                      <span className={`text-xs font-bold ${a.expired ? 'text-red-500' : 'text-gray-400'}`}>{a.pinOnly ? 'Hanya PIN' : a.expired ? 'Kedaluwarsa' : 'sampai ' + fmtDate(a.validUntil)}</span>
+                      {a.role !== 'Owner' && a.role !== 'Administrator' && a.role !== 'Rekan Bisnis' && (
+                        <button type="button" onClick={() => handleRemoveAccount(a)} aria-label={'Hapus ' + a.name + ' dari tablet ini'} title="Hapus dari tablet ini" className="text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg px-2.5 py-1.5"><i className="fa-solid fa-trash"></i></button>
+                      )}
+                    </span>
                   </div>
                 ))}
               </div>
