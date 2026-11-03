@@ -5494,7 +5494,7 @@
       const lowStockCount = ingredients.filter(i => effStock(i) <= Number(i.Min_Stock || 0)).length;
       const searchQ = search.trim().toLowerCase();
       const displayed = ingredients.filter(i => (!filterLow || effStock(i) <= Number(i.Min_Stock || 0)) && (!searchQ || String(i.Name || '').toLowerCase().includes(searchQ)));
-      const totalValue = ingredients.reduce((sum, i) => sum + (Number(i.Stock) * Number(i.Cost_Per_Unit || 0)), 0);
+      const totalValue = ingredients.reduce((sum, i) => sum + (Math.max(Number(i.Stock) || 0, 0) * Number(i.Cost_Per_Unit || 0)), 0);
 
       return (
         <div className="p-6 h-full overflow-y-auto">
