@@ -8069,7 +8069,18 @@
       const [subTab, setSubTab] = useState('labarugi');
       const [branchList, setBranchList] = useState([]);
       const [viewBranchId, setViewBranchId] = useState(allowBranchFilter ? 'ALL' : (branch ? branch.ID : 'BR001'));
-      const [month, setMonth] = useState(() => new Date().toISOString().substring(0, 7));
+      const localISO = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      const [month, setMonth] = useState(() => localISO(new Date()).substring(0, 7));
+      // Periode laporan: per bulan, atau rentang tanggal bebas.
+      const [periodMode, setPeriodMode] = useState('month');
+      const [startDate, setStartDate] = useState(() => localISO(new Date()).substring(0, 8) + '01');
+      const [endDate, setEndDate] = useState(() => localISO(new Date()));
+      const rangeValid = periodMode !== 'range' || (!!startDate && !!endDate && startDate <= endDate);
+      const rangeArgs = periodMode === 'range' ? [startDate, endDate] : [undefined, undefined];
+      const setPreset = (days) => {
+        const end = new Date(); const start = new Date(); start.setDate(end.getDate() - (days - 1));
+        setStartDate(localISO(start)); setEndDate(localISO(end));
+      };
 
       const [plData, setPlData] = useState(null);
       const [loadingPl, setLoadingPl] = useState(true);
@@ -8093,9 +8104,10 @@
 
       const loadPl = () => {
         setLoadingPl(true);
-        const [yearStr, monthStr] = month.split('-');
+        const [yearStr, monthStr] = (periodMode === 'range' ? startDate : month).split('-');
         const branchParam = viewBranchId === 'ALL' ? undefined : viewBranchId;
-        runGoogleScript('getProfitLossReport', branchParam, Number(monthStr), Number(yearStr)).then(data => {
+        if (!rangeValid) { setLoadingPl(false); return; }
+        runGoogleScript('getProfitLossReport', branchParam, Number(monthStr), Number(yearStr), rangeArgs[0], rangeArgs[1]).then(data => {
           setPlData(data);
           setLoadingPl(false);
         }).catch(() => setLoadingPl(false));
@@ -8112,15 +8124,16 @@
 
       const loadExpenses = () => {
         setLoadingExpenses(true);
-        const [yearStr, monthStr] = month.split('-');
+        const [yearStr, monthStr] = (periodMode === 'range' ? startDate : month).split('-');
         const branchParam = viewBranchId === 'ALL' ? undefined : viewBranchId;
-        runGoogleScript('getOperationalExpenses', branchParam, Number(monthStr), Number(yearStr)).then(data => {
+        if (!rangeValid) { setLoadingExpenses(false); return; }
+        runGoogleScript('getOperationalExpenses', branchParam, Number(monthStr), Number(yearStr), rangeArgs[0], rangeArgs[1]).then(data => {
           setExpenses(data || []);
           setLoadingExpenses(false);
         }).catch(() => setLoadingExpenses(false));
       };
 
-      useEffect(() => { loadPl(); loadInv(); loadExpenses(); }, [month, viewBranchId]);
+      useEffect(() => { loadPl(); loadInv(); loadExpenses(); }, [month, viewBranchId, periodMode, startDate, endDate]);
 
       const openExpenseModal = () => {
         setExpenseDate(new Date().toISOString().substring(0, 10));
@@ -8169,7 +8182,11 @@
       };
 
       const fmt = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
-      const monthLabel = new Date(month + '-01').toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+      const fmtDay = (s) => new Date(s + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+      const monthLabel = periodMode === 'range'
+        ? (rangeValid ? (startDate === endDate ? fmtDay(startDate) : fmtDay(startDate) + ' – ' + fmtDay(endDate)) : 'Rentang tidak valid')
+        : new Date(month + '-01').toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+      const periodWord = periodMode === 'range' ? 'periode ini' : 'bulan ini';
 
       return (
         <div className="p-6 h-full flex flex-col overflow-y-auto">
@@ -8190,7 +8207,23 @@
 
           <div className="flex flex-wrap items-center gap-3 mb-5">
             {subTab === 'labarugi' && (
+              <div className="bg-white rounded-xl border p-1 flex">
+                <button onClick={() => setPeriodMode('month')} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${periodMode === 'month' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>Per Bulan</button>
+                <button onClick={() => setPeriodMode('range')} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${periodMode === 'range' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>Rentang Tanggal</button>
+              </div>
+            )}
+            {subTab === 'labarugi' && periodMode === 'month' && (
               <input type="month" value={month} onChange={e => setMonth(e.target.value)} className="px-3 py-2 border rounded-xl text-sm font-bold bg-white" />
+            )}
+            {subTab === 'labarugi' && periodMode === 'range' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <input type="date" value={startDate} max={endDate || undefined} onChange={e => setStartDate(e.target.value)} aria-label="Dari tanggal" className="px-3 py-2 border rounded-xl text-sm font-bold bg-white" />
+                <span className="text-gray-400 text-sm font-bold">s/d</span>
+                <input type="date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} aria-label="Sampai tanggal" className="px-3 py-2 border rounded-xl text-sm font-bold bg-white" />
+                <button onClick={() => setPreset(1)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white border text-gray-600 hover:bg-gray-50">Hari ini</button>
+                <button onClick={() => setPreset(7)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white border text-gray-600 hover:bg-gray-50">7 hari</button>
+                <button onClick={() => setPreset(30)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white border text-gray-600 hover:bg-gray-50">30 hari</button>
+              </div>
             )}
             {allowBranchFilter && branchList.length > 0 && (
               <select value={viewBranchId} onChange={e => setViewBranchId(e.target.value)} className="px-3 py-2 border rounded-xl text-sm font-bold bg-white">
@@ -8203,6 +8236,8 @@
           {subTab === 'labarugi' && (
             loadingPl ? (
               <div className="bg-white rounded-xl border p-12 text-center text-gray-400"><i className="fa-solid fa-spinner fa-spin text-xl mr-2"></i>Memuat...</div>
+            ) : !rangeValid ? (
+              <div className="bg-white rounded-xl border p-8 text-center text-amber-600 font-semibold">Isi tanggal awal dan akhir, dan pastikan tanggal awal tidak melewati tanggal akhir.</div>
             ) : !plData ? (
               <div className="bg-white rounded-xl border p-8 text-center text-gray-400">Gagal memuat data.</div>
             ) : (
@@ -8237,7 +8272,7 @@
                   </div>
                   <p className="text-[11px] text-gray-400 mt-5 pt-4 border-t">
                     <i className="fa-solid fa-circle-info mr-1"></i>
-                    Dari {plData.jumlahTransaksi} transaksi bulan ini.
+                    Dari {plData.jumlahTransaksi} transaksi {periodWord}.
                   </p>
                 </div>
 
@@ -8253,7 +8288,7 @@
                   {loadingExpenses ? (
                     <p className="text-center text-gray-400 text-sm py-6"><i className="fa-solid fa-spinner fa-spin"></i></p>
                   ) : expenses.length === 0 ? (
-                    <p className="text-center text-gray-400 text-sm py-6">Belum ada biaya operasional dicatat bulan ini (sewa, listrik, air, dll).</p>
+                    <p className="text-center text-gray-400 text-sm py-6">Belum ada biaya operasional dicatat {periodWord} (sewa, listrik, air, dll).</p>
                   ) : (
                     <div className="space-y-2">
                       {expenses.map((exp, i) => (
