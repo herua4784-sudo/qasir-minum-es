@@ -5587,6 +5587,8 @@
     // Pembulatan penuh (tanpa angka di belakang koma) untuk layar Inventory milik Owner.
     const fmtInt = (n) => Math.round(Number(n || 0)).toLocaleString('id-ID');
     const fmtQty = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+    // Untuk riwayat pergerakan: jumlah >= 1 dibulatkan, tapi jumlah kecil (misal 0,02 Bks teh) tetap tampil desimalnya supaya tidak terbaca "0".
+    const fmtMove = (n) => { const v = Number(n || 0); return Math.abs(v) >= 1 || v === 0 ? Math.round(v).toLocaleString('id-ID') : v.toLocaleString('id-ID', { maximumFractionDigits: 3 }); };
 
     // Memantau antrian offline: begitu isinya berubah (ada yang masuk, atau selesai
     // tersinkron), panggil onChange supaya layar memuat ulang data terbaru.
@@ -6334,7 +6336,7 @@
                             <i className={`fa-solid ${m.Type === 'Masuk' ? 'fa-arrow-down' : 'fa-arrow-up'} mr-1`}></i>{m.Type}
                           </span>
                         </td>
-                        <td className="p-4 font-bold text-gray-700">{fmtInt(m.Qty)} {getIngredientUnit(m.Ingredient_ID)}</td>
+                        <td className="p-4 font-bold text-gray-700">{fmtMove(m.Qty)} {getIngredientUnit(m.Ingredient_ID)}</td>
                         <td className="p-4 text-gray-500">{m.Reason}{m.Reference ? <span className="text-[10px] text-gray-400 font-mono ml-1">({m.Reference})</span> : ''}</td>
                       </tr>
                     ))
