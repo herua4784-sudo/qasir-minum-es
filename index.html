@@ -759,6 +759,46 @@
       return <img src={src} alt={alt || ''} className={className} loading="lazy" decoding="async" onError={handleError} />;
     }
 
+    // ==== FILTER PERIODE BERSAMA (dipakai Riwayat Transaksi & Laporan Analitik) ====
+    const PERIOD_FILTERS = ['Hari Ini', 'Kemarin', 'Minggu Ini', 'Bulan Ini', '1 Bulan', '2 Bulan', '3 Bulan', '1 Tahun', 'Pilih Tanggal'];
+    // Mengubah pilihan periode jadi {start, end, days}. Semua dihitung jam lokal perangkat.
+    // Minggu Ini = 7 hari terakhir (termasuk hari ini). Bulan Ini = tanggal 1 sampai hari ini.
+    // 1/2/3 Bulan & 1 Tahun = mundur sebanyak itu dari hari ini (mis. 1 Bulan pada 5 Nov = 6 Okt s/d 5 Nov).
+    const resolvePeriodRange = (filter, startStr, endStr) => {
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const endOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+      const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+      const monthsBack = (n) => {
+        const t = new Date(today.getFullYear(), today.getMonth() - n, 1);
+        const dim = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
+        t.setDate(Math.min(today.getDate(), dim));
+        return addDays(t, 1);
+      };
+      const parseISO = (str, fallback) => {
+        const m = String(str || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+        return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : fallback;
+      };
+      let start = today, end = endOfDay(today);
+      switch (filter) {
+        case 'Kemarin': start = addDays(today, -1); end = endOfDay(start); break;
+        case 'Minggu Ini': start = addDays(today, -6); break;
+        case 'Bulan Ini': start = new Date(today.getFullYear(), today.getMonth(), 1); break;
+        case '1 Bulan': start = monthsBack(1); break;
+        case '2 Bulan': start = monthsBack(2); break;
+        case '3 Bulan': start = monthsBack(3); break;
+        case '1 Tahun': start = monthsBack(12); break;
+        case 'Pilih Tanggal': {
+          start = parseISO(startStr, today);
+          end = endOfDay(parseISO(endStr, today));
+          break;
+        }
+        default: break;
+      }
+      const days = Math.max(1, Math.round((new Date(end.getFullYear(), end.getMonth(), end.getDate()) - start) / 86400000) + 1);
+      return { start, end, days };
+    };
+
     const parseIndoDate = (dateVal) => {
       if (!dateVal) return new Date();
       if (dateVal instanceof Date || (typeof dateVal === 'object' && typeof dateVal.getMonth === 'function')) {
@@ -6862,24 +6902,11 @@
       // yang memang sudah otomatis dibatasi hari ini)
       const timeFilteredTrx = (() => {
         if (limitToday) return trx;
-        const now = new Date();
+        const range = resolvePeriodRange(timeFilter, startDate, endDate);
         return trx.filter(t => {
           try {
             const d = parseIndoDate(t.Date);
-            if (timeFilter === 'Hari Ini') {
-              return d.toDateString() === now.toDateString();
-            } else if (timeFilter === 'Minggu Ini') {
-              const diffDays = (now - d) / (1000 * 60 * 60 * 24);
-              return diffDays >= 0 && diffDays <= 7;
-            } else if (timeFilter === 'Bulan Ini') {
-              return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-            } else if (timeFilter === 'Pilih Tanggal') {
-              const start = new Date(startDate);
-              const end = new Date(endDate);
-              start.setHours(0, 0, 0, 0);
-              end.setHours(23, 59, 59, 999);
-              return d >= start && d <= end;
-            }
+            return d >= range.start && d <= range.end;
           } catch (err) {
             console.error("Filter tanggal bermasalah:", err);
           }
@@ -6907,8 +6934,8 @@
                   </select>
                 )}
                 <div className="bg-white rounded-xl shadow-sm border p-1 flex flex-wrap w-fit">
-                  {['Hari Ini', 'Minggu Ini', 'Bulan Ini', 'Pilih Tanggal'].map(tf => (
-                    <button key={tf} onClick={() => setTimeFilter(tf)} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${timeFilter === tf ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>{tf}</button>
+                  {PERIOD_FILTERS.map(tf => (
+                    <button key={tf} onClick={() => setTimeFilter(tf)} className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${timeFilter === tf ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>{tf}</button>
                   ))}
                 </div>
 
@@ -6960,7 +6987,7 @@
                       {loadError ? (
                         <span className="text-red-500 font-bold">Gagal memuat riwayat: {loadError}. Tekan tombol muat ulang di atas untuk mencoba lagi.</span>
                       ) : trx.length > 0 ? (
-                        'Ada ' + trx.length + ' transaksi tersimpan, tetapi tidak ada yang cocok dengan periode yang dipilih. Coba pilih "Bulan Ini" atau "Pilih Tanggal".'
+                        'Ada ' + trx.length + ' transaksi tersimpan, tetapi tidak ada yang cocok dengan periode yang dipilih. Coba pilih "1 Tahun" atau "Pilih Tanggal".'
                       ) : 'Tidak ada riwayat transaksi ditemukan.'}
                     </td></tr>
                   ) : (
@@ -8074,15 +8101,16 @@
       const localISO = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
       const [month, setMonth] = useState(() => localISO(new Date()).substring(0, 7));
       // Periode laporan: per bulan, atau rentang tanggal bebas.
-      const [periodMode, setPeriodMode] = useState('month');
+      const [timeFilter, setTimeFilter] = useState('Bulan Ini');
+      const periodMode = 'range'; // laporan selalu memakai rentang tanggal (hasil pilihan periode)
       const [startDate, setStartDate] = useState(() => localISO(new Date()).substring(0, 8) + '01');
       const [endDate, setEndDate] = useState(() => localISO(new Date()));
-      const rangeValid = periodMode !== 'range' || (!!startDate && !!endDate && startDate <= endDate);
-      const rangeArgs = periodMode === 'range' ? [startDate, endDate] : [undefined, undefined];
-      const setPreset = (days) => {
-        const end = new Date(); const start = new Date(); start.setDate(end.getDate() - (days - 1));
-        setStartDate(localISO(start)); setEndDate(localISO(end));
-      };
+      // Pilihan cepat (Hari Ini, Kemarin, ..., 1 Tahun) diubah jadi tanggal awal/akhir; "Pilih Tanggal" memakai isian manual.
+      const periodRange = resolvePeriodRange(timeFilter, startDate, endDate);
+      const rangeStart = timeFilter === 'Pilih Tanggal' ? startDate : localISO(periodRange.start);
+      const rangeEnd = timeFilter === 'Pilih Tanggal' ? endDate : localISO(periodRange.end);
+      const rangeValid = !!rangeStart && !!rangeEnd && rangeStart <= rangeEnd;
+      const rangeArgs = [rangeStart, rangeEnd];
 
       const [plData, setPlData] = useState(null);
       const [loadingPl, setLoadingPl] = useState(true);
@@ -8106,7 +8134,7 @@
 
       const loadPl = () => {
         setLoadingPl(true);
-        const [yearStr, monthStr] = (periodMode === 'range' ? startDate : month).split('-');
+        const [yearStr, monthStr] = rangeStart.split('-');
         const branchParam = viewBranchId === 'ALL' ? undefined : viewBranchId;
         if (!rangeValid) { setLoadingPl(false); return; }
         runGoogleScript('getProfitLossReport', branchParam, Number(monthStr), Number(yearStr), rangeArgs[0], rangeArgs[1]).then(data => {
@@ -8126,7 +8154,7 @@
 
       const loadExpenses = () => {
         setLoadingExpenses(true);
-        const [yearStr, monthStr] = (periodMode === 'range' ? startDate : month).split('-');
+        const [yearStr, monthStr] = rangeStart.split('-');
         const branchParam = viewBranchId === 'ALL' ? undefined : viewBranchId;
         if (!rangeValid) { setLoadingExpenses(false); return; }
         runGoogleScript('getOperationalExpenses', branchParam, Number(monthStr), Number(yearStr), rangeArgs[0], rangeArgs[1]).then(data => {
@@ -8135,7 +8163,7 @@
         }).catch(() => setLoadingExpenses(false));
       };
 
-      useEffect(() => { loadPl(); loadInv(); loadExpenses(); }, [month, viewBranchId, periodMode, startDate, endDate]);
+      useEffect(() => { loadPl(); loadInv(); loadExpenses(); }, [viewBranchId, rangeStart, rangeEnd]);
 
       const openExpenseModal = () => {
         setExpenseDate(new Date().toISOString().substring(0, 10));
@@ -8185,10 +8213,8 @@
 
       const fmt = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
       const fmtDay = (s) => new Date(s + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
-      const monthLabel = periodMode === 'range'
-        ? (rangeValid ? (startDate === endDate ? fmtDay(startDate) : fmtDay(startDate) + ' – ' + fmtDay(endDate)) : 'Rentang tidak valid')
-        : new Date(month + '-01').toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
-      const periodWord = periodMode === 'range' ? 'periode ini' : 'bulan ini';
+      const monthLabel = rangeValid ? (rangeStart === rangeEnd ? fmtDay(rangeStart) : fmtDay(rangeStart) + ' – ' + fmtDay(rangeEnd)) : 'Rentang tidak valid';
+      const periodWord = 'periode ini';
 
       return (
         <div className="p-6 h-full flex flex-col overflow-y-auto">
@@ -8209,22 +8235,17 @@
 
           <div className="flex flex-wrap items-center gap-3 mb-5">
             {subTab === 'labarugi' && (
-              <div className="bg-white rounded-xl border p-1 flex">
-                <button onClick={() => setPeriodMode('month')} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${periodMode === 'month' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>Per Bulan</button>
-                <button onClick={() => setPeriodMode('range')} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${periodMode === 'range' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>Rentang Tanggal</button>
+              <div className="bg-white rounded-xl border p-1 flex flex-wrap w-fit">
+                {PERIOD_FILTERS.map(tf => (
+                  <button key={tf} onClick={() => setTimeFilter(tf)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${timeFilter === tf ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>{tf}</button>
+                ))}
               </div>
             )}
-            {subTab === 'labarugi' && periodMode === 'month' && (
-              <input type="month" value={month} onChange={e => setMonth(e.target.value)} className="px-3 py-2 border rounded-xl text-sm font-bold bg-white" />
-            )}
-            {subTab === 'labarugi' && periodMode === 'range' && (
+            {subTab === 'labarugi' && timeFilter === 'Pilih Tanggal' && (
               <div className="flex flex-wrap items-center gap-2">
                 <input type="date" value={startDate} max={endDate || undefined} onChange={e => setStartDate(e.target.value)} aria-label="Dari tanggal" className="px-3 py-2 border rounded-xl text-sm font-bold bg-white" />
                 <span className="text-gray-400 text-sm font-bold">s/d</span>
                 <input type="date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} aria-label="Sampai tanggal" className="px-3 py-2 border rounded-xl text-sm font-bold bg-white" />
-                <button onClick={() => setPreset(1)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white border text-gray-600 hover:bg-gray-50">Hari ini</button>
-                <button onClick={() => setPreset(7)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white border text-gray-600 hover:bg-gray-50">7 hari</button>
-                <button onClick={() => setPreset(30)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white border text-gray-600 hover:bg-gray-50">30 hari</button>
               </div>
             )}
             {allowBranchFilter && branchList.length > 0 && (
@@ -8443,26 +8464,14 @@
       const processData = () => {
         try {
           const now = new Date();
+          const periodRange = resolvePeriodRange(timeFilter, startDate, endDate);
           
           const filteredTrx = rawTrx.filter(t => {
             try {
               const d = parseIndoDate(t.Date);
               const dDateOnly = new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
-              if (timeFilter === 'Hari Ini') {
-                return dDateOnly.toDateString() === now.toDateString();
-              } else if (timeFilter === 'Minggu Ini') {
-                const diffDays = (now - d) / (1000 * 60 * 60 * 24);
-                return diffDays >= 0 && diffDays <= 7;
-              } else if (timeFilter === 'Bulan Ini') {
-                return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-              } else if (timeFilter === 'Pilih Tanggal') {
-                const start = new Date(startDate);
-                const end = new Date(endDate);
-                start.setHours(0,0,0,0);
-                end.setHours(23,59,59,999);
-                return d >= start && d <= end;
-              }
+              return d >= periodRange.start && d <= periodRange.end;
             } catch (err) {
               console.error("Filter tanggal bermasalah:", err);
             }
@@ -8518,18 +8527,7 @@
 
           const avgTrxValue = trxCount > 0 ? omzet / trxCount : 0;
           
-          let daysDivisor = 1;
-          if (timeFilter === 'Minggu Ini') {
-            daysDivisor = 7;
-          } else if (timeFilter === 'Bulan Ini') {
-            daysDivisor = now.getDate() || 1; 
-          } else if (timeFilter === 'Pilih Tanggal') {
-            const start = new Date(startDate);
-            const end = new Date(endDate);
-            const diffTime = Math.abs(end - start);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-            daysDivisor = diffDays || 1;
-          }
+          const daysDivisor = periodRange.days || 1;
           const avgDailySales = omzet / daysDivisor;
 
           const daysIndo = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -8557,10 +8555,10 @@
              if (busiestHourStr !== '-') {
                 aiTips.push(`⚡ Berdasarkan data, jam paling sibuk pelanggan adalah pukul ${busiestHourStr}. Pastikan Anda dan karyawan sudah menyiapkan bahan-bahan lebih banyak sebelum jam ini agar tidak kewalahan.`);
              }
-             if (busiestDay !== '-' && timeFilter !== 'Hari Ini') {
+             if (busiestDay !== '-' && periodRange.days > 1) {
                 aiTips.push(`📆 Penjualan paling tinggi biasanya terjadi di hari ${busiestDay}. Untuk hari-hari yang lebih sepi, coba berikan promosi diskon spesial "Happy Hour" agar pelanggan tetap ramai.`);
              }
-             if (avgTrxValue < 15000 && timeFilter !== 'Hari Ini') {
+             if (avgTrxValue < 15000 && periodRange.days > 1) {
                 aiTips.push(`💸 Rata-rata orang belanja Rp ${Math.round(avgTrxValue).toLocaleString('id-ID')}. Latih kasir untuk melakukan "Upselling" yaitu menawarkan varian JUMBO atau Extra Topping setiap kali pelanggan memesan.`);
              } else if (trxCount > 0) {
                 aiTips.push(`🔥 Rata-rata nilai per transaksi sudah sangat baik. Pertahankan kualitas rasa dan berikan pelayanan ramah agar konsumen menjadi pelanggan tetap (loyal).`);
@@ -8620,9 +8618,9 @@
                     {branchList.map(b => <option key={b.ID} value={b.ID}>{b.Name}</option>)}
                   </select>
                 )}
-                <div className="bg-white rounded-xl shadow-sm border p-1 flex">
-                  {['Hari Ini', 'Minggu Ini', 'Bulan Ini', 'Pilih Tanggal'].map(tf => (
-                    <button key={tf} onClick={() => setTimeFilter(tf)} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${timeFilter === tf ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>
+                <div className="bg-white rounded-xl shadow-sm border p-1 flex flex-wrap w-fit">
+                  {PERIOD_FILTERS.map(tf => (
+                    <button key={tf} onClick={() => setTimeFilter(tf)} className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${timeFilter === tf ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>
                       {tf}
                     </button>
                   ))}
