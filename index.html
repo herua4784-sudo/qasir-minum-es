@@ -8404,6 +8404,7 @@
 
     function ReportView({ forceDailyOnly, branch, allowBranchFilter }) {
       const [rawTrx, setRawTrx] = useState([]);
+      const [showAllProducts, setShowAllProducts] = useState(false);
       const [loading, setLoading] = useState(true);
       const [loadError, setLoadError] = useState('');
       const [timeFilter, setTimeFilter] = useState(forceDailyOnly ? 'Hari Ini' : 'Hari Ini');
@@ -8472,6 +8473,7 @@
           let profit = 0;
           let trxCount = filteredTrx.length;
           let productSolds = {};
+          let productRevenue = {};
           let dayMap = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0};
           let hourMap = {};
 
@@ -8504,6 +8506,7 @@
                      if (baseName) {
                        if(!productSolds[baseName]) productSolds[baseName] = 0;
                        productSolds[baseName] += qty;
+                       productRevenue[baseName] = (productRevenue[baseName] || 0) + (price * qty - discount);
                      }
                    });
                  }
@@ -8539,10 +8542,10 @@
              busiestHourStr = `${String(busiestHour).padStart(2, '0')}:00 - ${String(Number(busiestHour)+1).padStart(2, '0')}:00`;
           }
 
-          const topProductsList = Object.entries(productSolds)
-             .map(([name, qty]) => ({name, qty}))
-             .sort((a, b) => b.qty - a.qty)
-             .slice(0, 5); 
+          const allProductsList = Object.entries(productSolds)
+             .map(([name, qty]) => ({name, qty, revenue: Math.round(productRevenue[name] || 0)}))
+             .sort((a, b) => b.qty - a.qty || b.revenue - a.revenue);
+          const topProductsList = allProductsList.slice(0, 5); 
 
           let aiTips = [];
           if (trxCount === 0) {
@@ -8566,13 +8569,13 @@
 
           return {
             omzet: Math.round(omzet), profit: Math.round(profit), trxCount, avgTrxValue: Math.round(avgTrxValue), avgDailySales: Math.round(avgDailySales), 
-            busiestDay, busiestHourStr, topProductsList, aiTips
+            busiestDay, busiestHourStr, topProductsList, allProductsList, aiTips
           };
         } catch (globalErr) {
           console.error("Critical error in processData:", globalErr);
           return {
             omzet: 0, profit: 0, trxCount: 0, avgTrxValue: 0, avgDailySales: 0, 
-            busiestDay: '-', busiestHourStr: '-', topProductsList: [], aiTips: ["Gagal memproses data laporan secara lengkap. Cek kesesuaian format database."]
+            busiestDay: '-', busiestHourStr: '-', topProductsList: [], allProductsList: [], aiTips: ["Gagal memproses data laporan secara lengkap. Cek kesesuaian format database."]
           };
         }
       };
@@ -8700,18 +8703,22 @@
               <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
                 <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
                   <h3 className="font-bold text-gray-800 flex items-center"><i className="fa-solid fa-fire text-orange-500 mr-2"></i>Produk Terlaris</h3>
-                  <span className="text-xs font-bold text-gray-400">Top 5</span>
+                  <div className="flex items-center gap-1 bg-white border rounded-lg p-0.5">
+                    <button onClick={() => setShowAllProducts(false)} className={`px-3 py-1 rounded-md text-xs font-bold ${!showAllProducts ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>Top 5</button>
+                    <button onClick={() => setShowAllProducts(true)} className={`px-3 py-1 rounded-md text-xs font-bold ${showAllProducts ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>Semua ({stats.allProductsList.length})</button>
+                  </div>
                 </div>
-                <div className="p-2">
+                <div className="p-2" style={showAllProducts ? {maxHeight: '520px', overflowY: 'auto'} : undefined}>
                   {stats.topProductsList.length === 0 ? (
                     <p className="text-center text-gray-400 py-6 text-sm">Belum ada data produk terjual pada periode ini.</p>
                   ) : (
                     <table className="w-full text-left text-sm">
                       <tbody>
-                        {stats.topProductsList.map((prod, idx) => (
+                        {(showAllProducts ? stats.allProductsList : stats.topProductsList).map((prod, idx) => (
                           <tr key={idx} className="border-b last:border-0 hover:bg-gray-50">
                             <td className="p-3 w-8 text-center font-bold text-gray-400">#{idx+1}</td>
                             <td className="p-3 font-bold text-gray-800">{prod.name}</td>
+                            {showAllProducts && <td className="p-3 text-right text-xs text-gray-500 font-semibold">Rp {Number(prod.revenue).toLocaleString('id-ID')}</td>}
                             <td className="p-3 text-right"><span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs font-bold">{prod.qty} Terjual</span></td>
                           </tr>
                         ))}
