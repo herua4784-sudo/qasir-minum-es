@@ -3488,7 +3488,7 @@
                          <td className="p-4">
                             {p.Price && Number(p.Price) > 0 ? (
                               <>
-                                <div className="text-gray-400 text-[11px] line-through mb-0.5">Rp {Number(p.Cost_Price || 0).toLocaleString('id-ID')}</div>
+                                <div className="text-gray-400 text-[11px] line-through mb-0.5">Rp {Math.round(Number(p.Cost_Price || 0)).toLocaleString('id-ID')}</div>
                                 <div className="text-gray-800 font-bold">Rp {Number(p.Price).toLocaleString('id-ID')}</div>
                               </>
                             ) : (
@@ -3498,7 +3498,7 @@
                          <td className="p-4">
                             {p.Harga_Jumbo && Number(p.Harga_Jumbo) > 0 ? (
                               <>
-                                <div className="text-gray-400 text-[11px] line-through mb-0.5">Rp {Number(p.Cost_Price_Jumbo || 0).toLocaleString('id-ID')}</div>
+                                <div className="text-gray-400 text-[11px] line-through mb-0.5">Rp {Math.round(Number(p.Cost_Price_Jumbo || 0)).toLocaleString('id-ID')}</div>
                                 <div className="text-orange-600 font-bold">Rp {Number(p.Harga_Jumbo).toLocaleString('id-ID')}</div>
                               </>
                             ) : (
