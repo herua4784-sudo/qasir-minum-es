@@ -6842,6 +6842,7 @@
     // --- RIWAYAT TRANSAKSI VIEW (STANDAR TANPA DUPLIKAT) ---
     function HistoryView({ limitToday, cashierName, settings, branch, allowBranchFilter, canVoid, voidBy }) {
       const [trx, setTrx] = useState([]);
+      const [detailTarget, setDetailTarget] = useState(null);
       const [voidTarget, setVoidTarget] = useState(null);
       const [voidReason, setVoidReason] = useState('');
       const [voidSaving, setVoidSaving] = useState(false);
@@ -7049,7 +7050,14 @@
                         </td>
                         <td className="p-4 font-bold text-slate-800" style={isVoided(t) ? { textDecoration: 'line-through' } : undefined}>Rp {Number(t.Total || 0).toLocaleString('id-ID')}</td>
                         <td className="p-4 text-center">
-                          <div className="flex items-center justify-center gap-2">
+                          <div className="flex items-center justify-center gap-2 flex-wrap">
+                            <button
+                              onClick={() => setDetailTarget(t)}
+                              className="text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"
+                              title="Lihat rincian transaksi tanpa mencetak"
+                            >
+                              <i className="fa-solid fa-eye"></i> Detail
+                            </button>
                             <button 
                               onClick={() => handlePrintAgain(t)} 
                               className="text-indigo-600 hover:text-indigo-850 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"
@@ -7081,6 +7089,66 @@
               </div>
             )}
           </div>
+          {detailTarget && (() => {
+            const t = detailTarget;
+            let items = [];
+            try { items = typeof t.Items === 'string' ? JSON.parse(t.Items) : (t.Items || []); } catch (e) { items = []; }
+            if (!Array.isArray(items)) items = [];
+            const rp = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+            const lineTotal = (it) => (Number(it.Price) || 0) * (Number(it.qty) || 0) - (Number(it.Discount) || 0);
+            const itemsSum = items.reduce((a, it) => a + lineTotal(it), 0);
+            const tax = Number(t.Tax) || 0;
+            const paid = t.Cash_Received !== undefined && t.Cash_Received !== '' ? Number(t.Cash_Received) : null;
+            const change = t.Change !== undefined && t.Change !== '' ? Number(t.Change) : null;
+            const dashed = { borderTop: '1px dashed #9ca3af', margin: '10px 0' };
+            const row = { display: 'flex', justifyContent: 'space-between', gap: '12px' };
+            const branchName = (branchList.find(b => b.ID === t.Branch_ID) || {}).Name || (branch && branch.Name) || '';
+            return (
+              <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setDetailTarget(null)}>
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+                  <div className="flex justify-between items-center p-4 border-b">
+                    <h3 className="font-bold text-lg text-gray-800">Detail Transaksi</h3>
+                    <button onClick={() => setDetailTarget(null)} className="text-gray-400 hover:bg-gray-100 w-8 h-8 rounded-full"><i className="fa-solid fa-xmark"></i></button>
+                  </div>
+                  <div style={{ overflowY: 'auto', padding: '16px', fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: '13px', color: '#1f2937' }}>
+                    {String(t.Status || '').toUpperCase() === 'DIBATALKAN' && (
+                      <div style={{ background: '#fff1f2', border: '1px solid #fecdd3', color: '#be123c', borderRadius: '8px', padding: '8px 10px', marginBottom: '10px', fontFamily: 'inherit', fontSize: '12px' }}>
+                        <b>DIBATALKAN</b> oleh {t.Void_By || '-'} ({t.Void_At || '-'})<br />Alasan: {t.Void_Reason || '-'}
+                      </div>
+                    )}
+                    <div style={{ textAlign: 'center', fontWeight: 700 }}>{(settings && settings.STORE_NAME) || 'MINUM.ES'}</div>
+                    {branchName && <div style={{ textAlign: 'center', color: '#6b7280' }}>{branchName}</div>}
+                    <div style={dashed}></div>
+                    <div style={row}><span>No.</span><span style={{ fontWeight: 700 }}>{t.TRX_ID}</span></div>
+                    <div style={row}><span>Waktu</span><span>{t.Date}</span></div>
+                    <div style={row}><span>Kasir</span><span>{t.Cashier}</span></div>
+                    <div style={dashed}></div>
+                    {items.length === 0 ? (
+                      <div style={{ color: '#9ca3af', textAlign: 'center' }}>Rincian item tidak tersedia.</div>
+                    ) : items.map((it, i) => (
+                      <div key={i} style={{ marginBottom: '8px' }}>
+                        <div style={{ fontWeight: 700 }}>{it.Name}</div>
+                        <div style={row}><span>{Number(it.qty) || 0} x {rp(it.Price)}</span><span>{rp((Number(it.Price) || 0) * (Number(it.qty) || 0))}</span></div>
+                        {Number(it.Discount) > 0 && <div style={{ ...row, color: '#e11d48' }}><span>Diskon</span><span>- {rp(it.Discount)}</span></div>}
+                      </div>
+                    ))}
+                    <div style={dashed}></div>
+                    {tax > 0 && <div style={row}><span>Subtotal</span><span>{rp(Number(t.Subtotal) || itemsSum)}</span></div>}
+                    {tax > 0 && <div style={row}><span>Pajak</span><span>{rp(tax)}</span></div>}
+                    <div style={{ ...row, fontWeight: 800, fontSize: '15px' }}><span>TOTAL</span><span>{rp(t.Total)}</span></div>
+                    <div style={row}><span>Metode</span><span>{t.Payment_Method || 'Tunai'}</span></div>
+                    {(t.Payment_Method || 'Tunai') !== 'QRIS' && paid !== null && <div style={row}><span>Tunai diterima</span><span>{rp(paid)}</span></div>}
+                    {(t.Payment_Method || 'Tunai') !== 'QRIS' && change !== null && <div style={row}><span>Kembalian</span><span>{rp(change)}</span></div>}
+                    {t._pendingSync && <div style={{ marginTop: '10px', color: '#b45309', textAlign: 'center' }}>Belum tersinkron ke server</div>}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', padding: '12px 16px', borderTop: '1px solid #e5e7eb' }}>
+                    <button onClick={() => setDetailTarget(null)} style={{ flex: 1, padding: '10px 0', borderRadius: '12px', background: '#f3f4f6', color: '#374151', fontWeight: 700, fontSize: '14px', border: 'none', cursor: 'pointer' }}>Tutup</button>
+                    <button onClick={() => handlePrintAgain(t)} style={{ flex: 1, padding: '10px 0', borderRadius: '12px', background: '#4f46e5', color: '#ffffff', fontWeight: 700, fontSize: '14px', border: 'none', cursor: 'pointer' }}>Cetak</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
           {voidTarget && (
             <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-sm">
