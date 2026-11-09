@@ -2961,7 +2961,7 @@
                     <div className="ml-4 space-y-1 mt-1">
                       <MenuBtn icon="fa-clipboard-list" label="Ringkasan Stok" active={activeTab === 'inventory-ringkasan'} onClick={() => goTo('inventory-ringkasan')} dark small />
                       <MenuBtn icon="fa-dolly" label="Barang Masuk" active={activeTab === 'inventory-barang-masuk'} onClick={() => goTo('inventory-barang-masuk')} dark small />
-                      <MenuBtn icon="fa-right-left" label="Catat Stok Masuk/Keluar" active={activeTab === 'inventory-catat'} onClick={() => goTo('inventory-catat')} dark small />
+                      <MenuBtn icon="fa-right-left" label="Koreksi Stok & Stok Terbuang" active={activeTab === 'inventory-catat'} onClick={() => goTo('inventory-catat')} dark small />
                       <MenuBtn icon="fa-fire-burner" label="Produksi Batch (Masak)" active={activeTab === 'inventory-produksi'} onClick={() => goTo('inventory-produksi')} dark small />
                       <MenuBtn icon="fa-clock-rotate-left" label="Riwayat Pergerakan" active={activeTab === 'inventory-riwayat'} onClick={() => goTo('inventory-riwayat')} dark small />
                       <MenuBtn icon="fa-sack-dollar" label="Laporan Pemakaian Bahan Baku" active={activeTab === 'inventory-laporan'} onClick={() => goTo('inventory-laporan')} dark small />
@@ -5356,7 +5356,7 @@
             <div style={{ marginTop: '12px', border: '1px solid #c7d2fe', background: '#eef2ff', borderRadius: '12px', padding: '12px 14px', fontSize: '12.5px', lineHeight: 1.55, color: '#3730a3' }}>
               <p style={{ fontWeight: 800, marginBottom: '6px' }}>Kapan menu ini dipakai? Ada dua cara:</p>
               <p style={{ marginBottom: '6px' }}><b>1. Tanpa catat masakan (otomatis).</b> Cocok untuk bahan yang selalu habis dan tidak ada sisa dibuang (misal Gula Cair). Karyawan cukup jualan. Setiap menu terjual, bahan mentah otomatis berkurang sedikit demi sedikit sesuai resep racikan.</p>
-              <p><b>2. Catat setiap masak lewat menu ini.</b> Wajib untuk bahan yang ada sisa dibuang tiap hari, misal <b>Teh</b>. Setelah selesai masak dan menyaring ke termos, pilih bahan olahan lalu catat berapa resep yang dimasak (⅙, ⅓, ⅔, atau 1 resep). Stok teh mentah berkurang saat itu, dan stok air teh bertambah. Penjualan lalu mengurangi stok air teh, dan sisa yang dibuang dicatat di <b>Catat Stok Keluar</b> (alasan "Dibuang") supaya masuk ke Biaya Terbuang di Laporan Keuangan.</p>
+              <p><b>2. Catat setiap masak lewat menu ini.</b> Wajib untuk bahan yang ada sisa dibuang tiap hari, misal <b>Teh</b>. Setelah selesai masak dan menyaring ke termos, pilih bahan olahan lalu catat berapa resep yang dimasak (⅙, ⅓, ⅔, atau 1 resep). Stok teh mentah berkurang saat itu, dan stok air teh bertambah. Penjualan lalu mengurangi stok air teh, dan sisa yang dibuang dicatat di <b>Koreksi Stok &amp; Stok Terbuang</b> (pilih Stok Keluar, alasan "Dibuang") supaya masuk ke Biaya Terbuang di Laporan Keuangan.</p>
               <p style={{ marginTop: '6px', color: '#4f46e5' }}>Kalau lupa mencatat masakan, penjualan tetap jalan: bahan mentah dipotong otomatis seperti cara 1, tetapi teh yang dibuang jadi tidak bisa dicatat dengan benar.</p>
             </div>
           </div>
@@ -6112,7 +6112,7 @@
           <div className="max-w-lg mx-auto">
             <div className="mb-6">
               <h2 className="text-2xl font-bold text-gray-800">Barang Masuk</h2>
-              <p className="text-gray-500 text-sm mt-1">Catat barang yang diambil dari gudang untuk outlet ini.</p>
+              <p className="text-gray-500 text-sm mt-1">Catat <b>barang yang datang atau diambil dari gudang</b> ke outlet ini. Untuk barang yang dibuang, rusak, tumpah, atau koreksi stok, pakai menu <b>Koreksi Stok &amp; Stok Terbuang</b>.</p>
             </div>
 
             {loading ? (
@@ -6250,8 +6250,8 @@
       return (
         <div className="p-6 h-full overflow-y-auto max-w-xl">
           <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800">Catat Stok Masuk / Keluar</h2>
-            <p className="text-gray-500 text-sm mt-1">Gunakan untuk mencatat pembelian bahan baku baru, atau penyesuaian stok (rusak, kadaluarsa, dsb). Pengurangan stok dari penjualan tercatat otomatis, tidak perlu diinput di sini.</p>
+            <h2 className="text-2xl font-bold text-gray-800">Koreksi Stok &amp; Stok Terbuang</h2>
+            <p className="text-gray-500 text-sm mt-1">Gunakan untuk <b>barang yang dibuang, rusak, atau tumpah</b> (pilih Stok Keluar), dan untuk <b>mengoreksi stok</b> yang selisih dengan hitungan di outlet. Barang yang datang atau diambil dari gudang dicatat di menu <b>Barang Masuk</b>. Pengurangan stok dari penjualan tercatat otomatis, tidak perlu diinput di sini.</p>
           </div>
 
           {loadError ? (
@@ -8459,7 +8459,7 @@
                       <span className="font-semibold text-rose-600">- {fmt(plData.totalBiayaLain)}</span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-gray-600" title="Bahan yang dibuang/rusak/tumpah (dicatat lewat Catat Stok Keluar)">Biaya Terbuang (Susut)</span>
+                      <span className="text-gray-600" title="Bahan yang dibuang/rusak/tumpah (dicatat lewat Koreksi Stok & Stok Terbuang)">Biaya Terbuang (Susut)</span>
                       <span className="font-semibold text-rose-600">- {fmt(plData.totalTerbuang || 0)}</span>
                     </div>
                     {(plData.terbuangRows || []).length > 0 && (
