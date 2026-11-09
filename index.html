@@ -5307,6 +5307,16 @@
 
       const batchNum = Number(batches) || 0;
       const totalYield = selectedOutput ? Number(selectedOutput.Batch_Yield || 0) * batchNum : 0;
+      // Berat bahan padat (gr) per 1 resep, dibaca dari nama bahan mentah (mis. "Teh Original 120g" x 1 = 120 gr)
+      const gramPerBatch = components.reduce((sum, c) => {
+        const gm = String(getIngredientName(c.Component_Ingredient_ID)).match(/(\d+(?:[.,]\d+)?)\s*(?:gr|g)\b/i);
+        return gm ? sum + Number(c.Component_Qty) * Number(String(gm[1]).replace(',', '.')) : sum;
+      }, 0);
+      const fmtYield = (qty) => {
+        const u = selectedOutput ? String(selectedOutput.Unit || '') : '';
+        if (u.toLowerCase() === 'ml' && qty >= 1000) return (qty / 1000).toLocaleString('id-ID', { maximumFractionDigits: 2 }) + ' liter';
+        return Number(qty).toLocaleString('id-ID', { maximumFractionDigits: 2 }) + ' ' + u;
+      };
 
       const handleSubmit = async (e) => {
         e.preventDefault();
@@ -5386,7 +5396,7 @@
                 {[['⅙', 1 / 6], ['⅓', 1 / 3], ['½', 0.5], ['⅔', 2 / 3], ['1', 1], ['2', 2]].map(([label, val]) => {
                   const active = Math.abs(batchNum - val) < 0.0001;
                   return (
-                    <button type="button" key={label} onClick={() => setBatches(Math.round(val * 1e6) / 1e6)} style={{ padding: '5px 12px', borderRadius: '999px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', border: active ? '1px solid #4f46e5' : '1px solid #e5e7eb', background: active ? '#eef2ff' : '#ffffff', color: active ? '#4338ca' : '#4b5563' }}>{label} resep</button>
+                    <button type="button" key={label} onClick={() => setBatches(Math.round(val * 1e6) / 1e6)} style={{ padding: '5px 12px', borderRadius: '12px', textAlign: 'center', fontSize: '13px', fontWeight: 700, cursor: 'pointer', border: active ? '1px solid #4f46e5' : '1px solid #e5e7eb', background: active ? '#eef2ff' : '#ffffff', color: active ? '#4338ca' : '#4b5563' }}>{label} resep{(gramPerBatch > 0 || selectedOutput) && (<span style={{ display: 'block', fontSize: '10px', fontWeight: 600, opacity: 0.8, lineHeight: 1.3 }}>{gramPerBatch > 0 ? Math.round(gramPerBatch * val * 100) / 100 + ' gr' : ''}{gramPerBatch > 0 && selectedOutput ? ' · ' : ''}{selectedOutput ? fmtYield(Number(selectedOutput.Batch_Yield || 0) * val) : ''}</span>)}</button>
                   );
                 })}
               </div>
@@ -5396,7 +5406,7 @@
             {selectedOutput && (
               <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
                 <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide mb-1">Hasil yang Akan Didapat</p>
-                <p className="text-2xl font-black text-emerald-700">{Number(totalYield || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} {selectedOutput.Unit}</p>
+                <p className="text-2xl font-black text-emerald-700">{Number(totalYield || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} {selectedOutput.Unit}</p>{gramPerBatch > 0 && <p className="text-sm font-bold text-emerald-700 mt-1">Bahan padat dipakai: {(Math.round(gramPerBatch * batchNum * 100) / 100).toLocaleString('id-ID')} gr</p>}
                 <p className="text-xs text-emerald-600 mt-1">({Number(selectedOutput.Batch_Yield || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} {selectedOutput.Unit} x {Number(batchNum).toLocaleString('id-ID', { maximumFractionDigits: 3 })} resep)</p>
               </div>
             )}
