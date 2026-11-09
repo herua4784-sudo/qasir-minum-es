@@ -2962,7 +2962,7 @@
                       <MenuBtn icon="fa-clipboard-list" label="Ringkasan Stok" active={activeTab === 'inventory-ringkasan'} onClick={() => goTo('inventory-ringkasan')} dark small />
                       <MenuBtn icon="fa-dolly" label="Barang Masuk" active={activeTab === 'inventory-barang-masuk'} onClick={() => goTo('inventory-barang-masuk')} dark small />
                       <MenuBtn icon="fa-right-left" label="Catat Stok Masuk/Keluar" active={activeTab === 'inventory-catat'} onClick={() => goTo('inventory-catat')} dark small />
-                      <MenuBtn icon="fa-fire-burner" label="Produksi Batch (Opsional)" active={activeTab === 'inventory-produksi'} onClick={() => goTo('inventory-produksi')} dark small />
+                      <MenuBtn icon="fa-fire-burner" label="Produksi Batch (Masak)" active={activeTab === 'inventory-produksi'} onClick={() => goTo('inventory-produksi')} dark small />
                       <MenuBtn icon="fa-clock-rotate-left" label="Riwayat Pergerakan" active={activeTab === 'inventory-riwayat'} onClick={() => goTo('inventory-riwayat')} dark small />
                       <MenuBtn icon="fa-sack-dollar" label="Laporan Pemakaian Bahan Baku" active={activeTab === 'inventory-laporan'} onClick={() => goTo('inventory-laporan')} dark small />
                     </div>
@@ -5351,9 +5351,14 @@
       return (
         <div className="p-6 h-full overflow-y-auto max-w-xl">
           <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800">Produksi Batch (Racikan) <span className="text-sm font-semibold text-indigo-500">Opsional</span></h2>
-            <p className="text-indigo-600 text-xs font-bold mt-1">Tidak wajib. Bahan racikan yang resep produksinya sudah diatur akan otomatis memakai bahan mentah setiap kali menu terjual, jadi karyawan tidak perlu membuat batch di aplikasi.</p>
-            <p className="text-gray-500 text-sm mt-1">Masak/olah bahan mentah jadi bahan siap pakai, misal Daun Teh + Air jadi Air Teh Ori. Stok bahan mentah otomatis berkurang, stok hasil racikan otomatis bertambah.</p>
+            <h2 className="text-2xl font-bold text-gray-800">Produksi Batch (Racikan)</h2>
+            <p className="text-gray-500 text-sm mt-1">Masak/olah bahan mentah jadi bahan siap pakai, misal Daun Teh + Air jadi Air Teh. Stok bahan mentah berkurang, stok hasil racikan bertambah.</p>
+            <div style={{ marginTop: '12px', border: '1px solid #c7d2fe', background: '#eef2ff', borderRadius: '12px', padding: '12px 14px', fontSize: '12.5px', lineHeight: 1.55, color: '#3730a3' }}>
+              <p style={{ fontWeight: 800, marginBottom: '6px' }}>Kapan menu ini dipakai? Ada dua cara:</p>
+              <p style={{ marginBottom: '6px' }}><b>1. Tanpa catat masakan (otomatis).</b> Cocok untuk bahan yang selalu habis dan tidak ada sisa dibuang (misal Gula Cair). Karyawan cukup jualan. Setiap menu terjual, bahan mentah otomatis berkurang sedikit demi sedikit sesuai resep racikan.</p>
+              <p><b>2. Catat setiap masak lewat menu ini.</b> Wajib untuk bahan yang ada sisa dibuang tiap hari, misal <b>Teh</b>. Setelah selesai masak dan menyaring ke termos, pilih bahan olahan lalu catat berapa resep yang dimasak (⅙, ⅓, ⅔, atau 1 resep). Stok teh mentah berkurang saat itu, dan stok air teh bertambah. Penjualan lalu mengurangi stok air teh, dan sisa yang dibuang dicatat di <b>Catat Stok Keluar</b> (alasan "Dibuang") supaya masuk ke Biaya Terbuang di Laporan Keuangan.</p>
+              <p style={{ marginTop: '6px', color: '#4f46e5' }}>Kalau lupa mencatat masakan, penjualan tetap jalan: bahan mentah dipotong otomatis seperti cara 1, tetapi teh yang dibuang jadi tidak bisa dicatat dengan benar.</p>
+            </div>
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border p-6 space-y-4">
