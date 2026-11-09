@@ -5393,7 +5393,7 @@
                 <button type="button" onClick={() => setBatches(Math.round((batchNum + 1) * 1e6) / 1e6)} className="w-10 h-10 bg-slate-100 border rounded-lg font-bold text-gray-600">+</button>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '10px' }}>
-                {[['⅙', 1 / 6], ['⅓', 1 / 3], ['½', 0.5], ['⅔', 2 / 3], ['1', 1], ['2', 2]].map(([label, val]) => {
+                {[['⅙', 1 / 6], ['⅓', 1 / 3], ['½', 0.5], ['⅔', 2 / 3], ['1', 1]].map(([label, val]) => {
                   const active = Math.abs(batchNum - val) < 0.0001;
                   return (
                     <button type="button" key={label} onClick={() => setBatches(Math.round(val * 1e6) / 1e6)} style={{ padding: '5px 12px', borderRadius: '12px', textAlign: 'center', fontSize: '13px', fontWeight: 700, cursor: 'pointer', border: active ? '1px solid #4f46e5' : '1px solid #e5e7eb', background: active ? '#eef2ff' : '#ffffff', color: active ? '#4338ca' : '#4b5563' }}>{label} resep{(gramPerBatch > 0 || selectedOutput) && (<span style={{ display: 'block', fontSize: '10px', fontWeight: 600, opacity: 0.8, lineHeight: 1.3 }}>{gramPerBatch > 0 ? Math.round(gramPerBatch * val * 100) / 100 + ' gr' : ''}{gramPerBatch > 0 && selectedOutput ? ' · ' : ''}{selectedOutput ? fmtYield(Number(selectedOutput.Batch_Yield || 0) * val) : ''}</span>)}</button>
