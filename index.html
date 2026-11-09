@@ -2675,7 +2675,7 @@
                 <MenuBtn icon="fa-calculator" label="Transaksi" active={activeTab === 'pos'} onClick={() => goTo('pos')} />
                 <MenuBtn icon="fa-clock" label="Absensi" active={activeTab === 'absen'} onClick={() => goTo('absen')} />
                 <MenuBtn icon="fa-receipt" label="Riwayat Transaksi" active={activeTab === 'history'} onClick={() => goTo('history')} />
-                <MenuBtn icon="fa-dolly" label="Barang Masuk" active={activeTab === 'barang-masuk'} onClick={() => goTo('barang-masuk')} />
+                <MenuBtn icon="fa-warehouse" label="Stok" active={activeTab === 'barang-masuk'} onClick={() => goTo('barang-masuk')} />
               </div>
             </div>
             </div>
@@ -5677,9 +5677,11 @@
     function BarangMasukMenuView({ user, branch }) {
       const [tab, setTab] = useState('catat');
       const tabs = [
-        { id: 'catat', icon: 'fa-box-open', label: 'Catat Barang Masuk' },
-        { id: 'riwayat', icon: 'fa-clock-rotate-left', label: 'Riwayat Masuk/Keluar' },
-        { id: 'stok', icon: 'fa-warehouse', label: 'Stok Outlet' }
+        { id: 'catat', icon: 'fa-box-open', label: 'Barang Masuk' },
+        { id: 'masak', icon: 'fa-fire-burner', label: 'Masak' },
+        { id: 'terbuang', icon: 'fa-trash-can', label: 'Stok Terbuang' },
+        { id: 'stok', icon: 'fa-warehouse', label: 'Stok Outlet' },
+        { id: 'riwayat', icon: 'fa-clock-rotate-left', label: 'Riwayat' }
       ];
       return (
         <div className="h-full flex flex-col">
@@ -5697,6 +5699,8 @@
             <div className="h-full" style={{ display: tab === 'catat' ? 'block' : 'none' }}>
               <BarangMasukView user={user} branch={branch} />
             </div>
+            {tab === 'masak' && <ProduceBatchView user={user} branch={branch} />}
+            {tab === 'terbuang' && <StockMovementFormView user={user} branch={branch} wasteOnly={true} />}
             {tab === 'riwayat' && <KasirStockHistoryView branch={branch} />}
             {tab === 'stok' && <OutletStockReportView branch={branch} />}
           </div>
@@ -6194,11 +6198,12 @@
       );
     }
 
-    function StockMovementFormView({ user, branch }) {
+    function StockMovementFormView({ user, branch, wasteOnly }) {
       const [ingredients, setIngredients] = useState([]);
       const [loading, setLoading] = useState(true);
       const [loadError, setLoadError] = useState(false);
-      const [type, setType] = useState('Masuk');
+      const [type, setType] = useState(wasteOnly ? 'Keluar' : 'Masuk');
+      const [wasteNote, setWasteNote] = useState('');
       const [ingredientId, setIngredientId] = useState('');
       const [unitType, setUnitType] = useState('base');
       const [qty, setQty] = useState('');
@@ -6240,6 +6245,11 @@
           notify.alert("Pilih bahan baku dan isi jumlah dengan benar.", "Data Belum Lengkap", "error");
           return;
         }
+        if (wasteOnly && !isWasteReasonText) {
+          notify.alert("Pilih alasan dulu: Dibuang, Rusak, atau Tumpah.", "Alasan Belum Dipilih", "error");
+          return;
+        }
+        const reasonFinal = wasteOnly ? (reason + (wasteNote.trim() ? ' - ' + wasteNote.trim().replace(/\[|\]/g, '') : '')) : reason;
         setSubmitting(true);
         try {
           const res = await runGoogleScript(
@@ -6247,7 +6257,7 @@
             ingredientId,
             type,
             Number(qty),
-            (reason || (type === 'Masuk' ? 'Pembelian Stok' : 'Penyesuaian Manual')) + (showLeftoverDate && leftoverDate ? ' [sisa ' + leftoverDate + ']' : ''),
+            (reasonFinal || (type === 'Masuk' ? 'Pembelian Stok' : 'Penyesuaian Manual')) + (showLeftoverDate && leftoverDate ? ' [sisa ' + leftoverDate + ']' : ''),
             user && user.name ? user.name : 'Owner',
             unitType,
             branchId
@@ -6261,6 +6271,7 @@
             }
             setQty('');
             setReason('');
+            setWasteNote('');
             setLeftoverDate('');
             loadData();
           } else {
@@ -6275,8 +6286,9 @@
       return (
         <div className="p-6 h-full overflow-y-auto max-w-xl">
           <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800">Koreksi Stok &amp; Stok Terbuang</h2>
-            <p className="text-gray-500 text-sm mt-1">Gunakan untuk <b>barang yang dibuang, rusak, atau tumpah</b> (pilih Stok Keluar), dan untuk <b>mengoreksi stok</b> yang selisih dengan hitungan di outlet. Barang yang datang atau diambil dari gudang dicatat di menu <b>Barang Masuk</b>. Pengurangan stok dari penjualan tercatat otomatis, tidak perlu diinput di sini.</p>
+            <h2 className="text-2xl font-bold text-gray-800">{wasteOnly ? 'Stok Terbuang' : 'Koreksi Stok & Stok Terbuang'}</h2>
+            {wasteOnly && <p className="text-gray-500 text-sm mt-1">Catat barang yang <b>dibuang, rusak, atau tumpah</b> (misal sisa teh yang dibuang). Ukur dulu jumlahnya, lalu isi di sini. Barang yang datang dicatat di tab Barang Masuk.</p>}
+            {!wasteOnly && <p className="text-gray-500 text-sm mt-1">Gunakan untuk <b>barang yang dibuang, rusak, atau tumpah</b> (pilih Stok Keluar), dan untuk <b>mengoreksi stok</b> yang selisih dengan hitungan di outlet. Barang yang datang atau diambil dari gudang dicatat di menu <b>Barang Masuk</b>. Pengurangan stok dari penjualan tercatat otomatis, tidak perlu diinput di sini.</p>}
           </div>
 
           {loadError ? (
@@ -6290,7 +6302,7 @@
             </div>
           ) : (
             <div className="bg-white rounded-2xl shadow-sm border p-6">
-              <div className="grid grid-cols-2 gap-3 mb-5">
+              {!wasteOnly && <div className="grid grid-cols-2 gap-3 mb-5">
                 <button type="button" onClick={() => setType('Masuk')} className={`p-4 rounded-xl border flex flex-col items-center gap-2 transition-all ${type === 'Masuk' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 ring-2 ring-emerald-100' : 'border-gray-200 text-gray-500'}`}>
                   <i className="fa-solid fa-arrow-down text-xl"></i>
                   <span className="font-bold text-sm">Stok Masuk</span>
@@ -6299,7 +6311,7 @@
                   <i className="fa-solid fa-arrow-up text-xl"></i>
                   <span className="font-bold text-sm">Stok Keluar</span>
                 </button>
-              </div>
+              </div>}
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
@@ -6349,7 +6361,11 @@
                       ))}
                     </div>
                   )}
-                  <input type="text" value={reason} onChange={e => setReason(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder={type === 'Masuk' ? 'Misal: Belanja ke supplier X' : 'Pilih di atas, atau tulis sendiri'} />
+                  {wasteOnly ? (
+                    <input type="text" value={wasteNote} onChange={e => setWasteNote(e.target.value)} maxLength={80} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Catatan tambahan (opsional)" />
+                  ) : (
+                    <input type="text" value={reason} onChange={e => setReason(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder={type === 'Masuk' ? 'Misal: Belanja ke supplier X' : 'Pilih di atas, atau tulis sendiri'} />
+                  )}
                   {type === 'Keluar' && <p className="text-[11px] text-gray-400 mt-1">Alasan berawalan "Dibuang", "Rusak", atau "Tumpah" dihitung sebagai Biaya Terbuang di Laporan Keuangan.</p>}
                   {showLeftoverDate && (
                     <div style={{ marginTop: '12px', padding: '12px', border: '1px solid #e5e7eb', borderRadius: '12px', background: '#f9fafb' }}>
