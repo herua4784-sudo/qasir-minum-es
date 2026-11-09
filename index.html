@@ -5565,7 +5565,7 @@
       const lowStockCount = ingredients.filter(i => effStock(i) <= Number(i.Min_Stock || 0)).length;
       const searchQ = search.trim().toLowerCase();
       const displayed = ingredients.filter(i => (!filterLow || effStock(i) <= Number(i.Min_Stock || 0)) && (!searchQ || String(i.Name || '').toLowerCase().includes(searchQ)));
-      const totalValue = ingredients.reduce((sum, i) => sum + (Math.max(Number(i.Stock) || 0, 0) * Number(i.Cost_Per_Unit || 0)), 0);
+      const totalValue = ingredients.reduce((sum, i) => sum + (isAutoOlahan(i) ? 0 : Math.max(Number(i.Stock) || 0, 0) * Number(i.Cost_Per_Unit || 0)), 0);
 
       return (
         <div className="p-6 h-full overflow-y-auto">
@@ -5609,14 +5609,16 @@
                     <th className="p-4 font-semibold text-gray-600">Bahan Baku</th>
                     <th className="p-4 font-semibold text-gray-600">Stok Saat Ini</th>
                     <th className="p-4 font-semibold text-gray-600">Stok Minimum</th>
+                    <th className="p-4 font-semibold text-gray-600">Harga/Satuan</th>
+                    <th className="p-4 font-semibold text-gray-600">Nilai Stok</th>
                     <th className="p-4 font-semibold text-gray-600">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan="4" className="p-12 text-center text-gray-400">Memuat...</td></tr>
+                    <tr><td colSpan="6" className="p-12 text-center text-gray-400">Memuat...</td></tr>
                   ) : displayed.length === 0 ? (
-                    <tr><td colSpan="4" className="p-12 text-center text-gray-400">Tidak ada data.</td></tr>
+                    <tr><td colSpan="6" className="p-12 text-center text-gray-400">Tidak ada data.</td></tr>
                   ) : (
                     displayed.map(ing => {
                       const isLow = effStock(ing) <= Number(ing.Min_Stock || 0);
@@ -5625,6 +5627,8 @@
                           <td className="p-4 font-bold text-gray-800">{ing.Name}{isAutoOlahan(ing) && <span className="block text-[11px] font-semibold text-indigo-500">Racikan otomatis dari bahan mentah</span>}</td>
                           <td className="p-4 font-bold">{fmtInt(effStock(ing))} {ing.Unit}</td>
                           <td className="p-4 text-gray-500">{fmtInt(ing.Min_Stock || 0)} {ing.Unit}</td>
+                          <td className="p-4 text-gray-500">Rp {Number(ing.Cost_Per_Unit || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}</td>
+                          <td className="p-4 font-bold text-emerald-700">{isAutoOlahan(ing) ? <span className="text-xs font-semibold text-gray-400">ikut bahan mentah</span> : 'Rp ' + fmtInt(Math.max(Number(ing.Stock) || 0, 0) * Number(ing.Cost_Per_Unit || 0))}</td>
                           <td className="p-4">
                             {isLow ? (
                               <span className="bg-red-100 text-red-600 text-xs font-bold px-2.5 py-1 rounded-full"><i className="fa-solid fa-triangle-exclamation mr-1"></i>Menipis</span>
@@ -5637,6 +5641,15 @@
                     })
                   )}
                 </tbody>
+                {!loading && displayed.length > 0 && (
+                  <tfoot className="bg-emerald-50 border-t">
+                    <tr>
+                      <td className="p-4 font-bold text-gray-700" colSpan="4">Total Nilai Stok{(filterLow || searchQ) ? ' (yang ditampilkan)' : ''}</td>
+                      <td className="p-4 font-black text-emerald-700">Rp {fmtInt(displayed.reduce((sum, i) => sum + (isAutoOlahan(i) ? 0 : Math.max(Number(i.Stock) || 0, 0) * Number(i.Cost_Per_Unit || 0)), 0))}</td>
+                      <td className="p-4"></td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
