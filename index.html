@@ -2662,7 +2662,7 @@
           <SidebarToggleButton collapsed={sidebarCollapsed} onClick={toggleSidebar} />
 
           <div className={`fixed lg:static inset-y-0 left-0 z-50 w-72 ${sidebarCollapsed ? 'lg:w-0 lg:opacity-0 lg:overflow-hidden lg:border-r-0' : 'lg:w-64'} max-w-[85vw] transform transition-all duration-300 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 bg-white border-r flex flex-col justify-between flex-shrink-0 h-full`}>
-            <div className="overflow-y-auto no-scrollbar">
+            <div className="flex flex-col flex-1 min-h-0">
               <div className="h-16 flex items-center px-6 border-b flex-shrink-0">
                 <i className="fa-solid fa-cash-register text-indigo-600 text-xl"></i>
                 <div className="ml-3 leading-tight">
@@ -2670,12 +2670,14 @@
                   {branch && <span className="text-[10px] text-indigo-600 font-bold">{branch.Name}</span>}
                 </div>
               </div>
+              <div className="overflow-y-auto no-scrollbar flex-1 min-h-0">
               <div className="p-4 space-y-2">
                 <MenuBtn icon="fa-calculator" label="Transaksi" active={activeTab === 'pos'} onClick={() => goTo('pos')} />
                 <MenuBtn icon="fa-clock" label="Absensi" active={activeTab === 'absen'} onClick={() => goTo('absen')} />
                 <MenuBtn icon="fa-receipt" label="Riwayat Transaksi" active={activeTab === 'history'} onClick={() => goTo('history')} />
                 <MenuBtn icon="fa-dolly" label="Barang Masuk" active={activeTab === 'barang-masuk'} onClick={() => goTo('barang-masuk')} />
               </div>
+            </div>
             </div>
             <div className="p-4 border-t flex-shrink-0">
               <div className="mb-4 px-2">
@@ -2739,7 +2741,7 @@
           <SidebarToggleButton collapsed={sidebarCollapsed} onClick={toggleSidebar} />
 
           <div className={`fixed lg:static inset-y-0 left-0 z-50 w-72 ${sidebarCollapsed ? 'lg:w-0 lg:opacity-0 lg:overflow-hidden lg:border-r-0' : 'lg:w-64'} max-w-[85vw] transform transition-all duration-300 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 bg-slate-800 text-slate-100 flex flex-col justify-between flex-shrink-0 h-full`}>
-            <div className="overflow-y-auto no-scrollbar">
+            <div className="flex flex-col flex-1 min-h-0">
               <div className="h-16 flex items-center px-6 border-b border-slate-700 flex-shrink-0">
                 <i className="fa-solid fa-handshake text-indigo-400 text-xl"></i>
                 <div className="ml-3 leading-tight">
@@ -2747,6 +2749,7 @@
                   {branch && <span className="text-[10px] text-indigo-400 font-bold">{branch.Name}</span>}
                 </div>
               </div>
+              <div className="overflow-y-auto no-scrollbar flex-1 min-h-0">
               <div className="p-4 space-y-2">
                 <MenuBtn icon="fa-chart-pie" label="Laporan Analitik" active={activeTab === 'laporan'} onClick={() => goTo('laporan')} dark />
                 <MenuBtn icon="fa-file-invoice-dollar" label="Laporan Keuangan" active={activeTab === 'keuangan'} onClick={() => goTo('keuangan')} dark />
@@ -2805,6 +2808,7 @@
                   )}
                 </div>
               </div>
+            </div>
             </div>
             <div className="p-4 border-t border-slate-700 flex-shrink-0">
               <div className="mb-4 px-2">
@@ -2890,7 +2894,7 @@
           <SidebarToggleButton collapsed={sidebarCollapsed} onClick={toggleSidebar} />
 
           <div className={`fixed lg:static inset-y-0 left-0 z-50 w-72 ${sidebarCollapsed ? 'lg:w-0 lg:opacity-0 lg:overflow-hidden lg:border-r-0' : 'lg:w-64'} max-w-[85vw] transform transition-all duration-300 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 bg-slate-900 text-white flex flex-col justify-between flex-shrink-0 h-full`}>
-            <div className="overflow-y-auto no-scrollbar">
+            <div className="flex flex-col flex-1 min-h-0">
               <div className="px-6 pt-4 pb-2 border-b border-slate-700 flex-shrink-0">
                 <div className="flex items-center mb-3">
                   <i className="fa-solid fa-chart-line text-emerald-400 text-xl"></i>
@@ -2905,6 +2909,7 @@
                   </div>
                 )}
               </div>
+              <div className="overflow-y-auto no-scrollbar flex-1 min-h-0">
               <div className="p-4 space-y-2">
                 <MenuBtn icon="fa-chart-pie" label="Laporan Analitik" active={activeTab === 'laporan'} onClick={() => goTo('laporan')} dark />
                 <MenuBtn icon="fa-file-invoice-dollar" label="Laporan Keuangan" active={activeTab === 'keuangan'} onClick={() => goTo('keuangan')} dark />
@@ -2974,6 +2979,7 @@
                 <MenuBtn icon="fa-receipt" label="Semua Transaksi" active={activeTab === 'transaksi'} onClick={() => goTo('transaksi')} dark />
                 <MenuBtn icon="fa-calculator" label="POS (Akses Penuh)" active={activeTab === 'pos'} onClick={() => goTo('pos')} dark />
               </div>
+            </div>
             </div>
             <div className="p-4 border-t border-slate-700 flex-shrink-0">
               <div className="mb-4 px-2">
