@@ -6038,6 +6038,8 @@
       const [qty, setQty] = useState('');
       const [customPriceMode, setCustomPriceMode] = useState(false);
       const [customPrice, setCustomPrice] = useState('');
+      const [buySource, setBuySource] = useState('toko'); // 'toko' = beli di luar gudang, 'gudang' = dari gudang tapi harga berubah
+      const [storeName, setStoreName] = useState('');
       const [submitting, setSubmitting] = useState(false);
       const notify = useNotification();
       const branchId = branch ? branch.ID : 'BR001';
@@ -6081,7 +6083,9 @@
             ingredientId,
             'Masuk',
             Number(qty),
-            'Ambil dari Gudang',
+            !customPriceMode ? 'Ambil dari Gudang'
+              : (buySource === 'gudang' ? 'Ambil dari Gudang (harga berubah)'
+                : 'Beli di luar gudang' + (storeName.trim() ? ' · ' + storeName.trim().replace(/\[|\]/g, '').slice(0, 60) : '')),
             user && user.name ? user.name : 'Kasir',
             hasPurchaseUnit ? 'purchase' : 'base',
             branchId,
@@ -6099,6 +6103,8 @@
             setQty('');
             setCustomPriceMode(false);
             setCustomPrice('');
+            setStoreName('');
+            setBuySource('toko');
             loadData();
           } else {
             notify.alert("Gagal mencatat: " + res.message, "Gagal", "error");
@@ -6156,6 +6162,16 @@
                     <input type="checkbox" checked={customPriceMode} onChange={e => setCustomPriceMode(e.target.checked)} className="w-4 h-4 mt-0.5 flex-shrink-0" />
                     <span className="text-sm font-semibold text-gray-700">Harga beli beda dari biasanya (naik/turun, atau beli di luar gudang)</span>
                   </label>
+                  {customPriceMode && (
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
+                      {[['toko', 'Beli di toko / luar gudang'], ['gudang', 'Dari gudang, harga berubah']].map(([val, label]) => (
+                        <button type="button" key={val} onClick={() => setBuySource(val)} style={{ flex: 1, padding: '8px 6px', borderRadius: '10px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', border: buySource === val ? '1px solid #4f46e5' : '1px solid #e5e7eb', background: buySource === val ? '#eef2ff' : '#ffffff', color: buySource === val ? '#4338ca' : '#4b5563' }}>{label}</button>
+                      ))}
+                    </div>
+                  )}
+                  {customPriceMode && buySource === 'toko' && (
+                    <input type="text" value={storeName} onChange={e => setStoreName(e.target.value)} maxLength={60} placeholder="Nama toko (opsional), misal: Toko Sumber Rejeki" className="w-full px-3 py-2.5 border rounded-lg text-sm mt-3" />
+                  )}
                   {customPriceMode && (
                     <DecimalInput value={customPrice} onChange={v => setCustomPrice(v)} placeholder={`Harga per ${inputUnitLabel || 'satuan'} saat ini (Rp)`} className="w-full px-3 py-2.5 border rounded-lg text-sm mt-3" autoFocus={true} />
                   )}
