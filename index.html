@@ -2729,7 +2729,7 @@
         <div className="h-full" style={{ display: activeTab === tabKey ? 'block' : 'none' }}>{node}</div>
       ) : null;
 
-      const laporanTabs = ['laporan', 'keuangan'];
+      const laporanTabs = ['keuangan', 'penjualan'];
       const produkTabs = ['produk-katalog', 'produk-resep', 'kategori'];
       const inventoryTabs = ['inventory-ringkasan', 'inventory-riwayat', 'inventory-laporan'];
       const pegawaiTabs = ['absensi', 'rekap-shift'];
@@ -2753,6 +2753,8 @@
               </div>
               <div className="overflow-y-auto no-scrollbar flex-1 min-h-0">
               <div className="p-4 space-y-2">
+                <MenuBtn icon="fa-chart-pie" label="Laporan Analitik" active={activeTab === 'laporan'} onClick={() => goTo('laporan')} dark />
+
                 {/* GRUP: LAPORAN */}
                 <div>
                   <div onClick={() => setLaporanOpen(!laporanOpen)} className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all ${laporanTabs.includes(activeTab) ? 'text-emerald-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
@@ -2765,7 +2767,7 @@
                   {laporanOpen && (
                     <div className="ml-4 space-y-1 mt-1">
                       <MenuBtn icon="fa-file-invoice-dollar" label="Laporan Keuangan" active={activeTab === 'keuangan'} onClick={() => goTo('keuangan')} dark small />
-                      <MenuBtn icon="fa-ranking-star" label="Ringkasan Penjualan" active={activeTab === 'laporan'} onClick={() => goTo('laporan')} dark small />
+                      <MenuBtn icon="fa-ranking-star" label="Ringkasan Penjualan" active={activeTab === 'penjualan'} onClick={() => goTo('penjualan')} dark small />
                     </div>
                   )}
                 </div>
@@ -2845,6 +2847,7 @@
             </div>
             <div className="flex-1 overflow-hidden">
               {keepAlive('laporan', <ReportView branch={branch} allowBranchFilter={false} />)}
+              {keepAlive('penjualan', <ReportView branch={branch} allowBranchFilter={false} detailOnly={true} />)}
               {keepAlive('keuangan', <FinancialReportView branch={branch} allowBranchFilter={false} readOnly={true} />)}
               {keepAlive('transaksi', <HistoryView limitToday={false} settings={settings} branch={branch} />)}
               {keepAlive('produk-katalog', <ProductManagerView hideDeleteForAdmin={true} branch={branch} readOnly={true} />)}
@@ -2883,7 +2886,7 @@
         }
       };
 
-      const laporanTabs = ['laporan', 'keuangan'];
+      const laporanTabs = ['keuangan', 'penjualan'];
       const produkTabs = ['produk-katalog', 'produk-resep', 'kategori'];
       const inventoryTabs = ['inventory-ringkasan', 'inventory-barang-masuk', 'inventory-catat', 'inventory-produksi', 'inventory-riwayat', 'inventory-laporan'];
       const pegawaiTabs = ['pegawai', 'absensi'];
@@ -2929,6 +2932,8 @@
               </div>
               <div className="overflow-y-auto no-scrollbar flex-1 min-h-0">
               <div className="p-4 space-y-2">
+                <MenuBtn icon="fa-chart-pie" label="Laporan Analitik" active={activeTab === 'laporan'} onClick={() => goTo('laporan')} dark />
+
                 {/* GRUP: LAPORAN */}
                 <div>
                   <div onClick={() => setLaporanOpen(!laporanOpen)} className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all ${laporanTabs.includes(activeTab) ? 'text-emerald-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
@@ -2941,7 +2946,7 @@
                   {laporanOpen && (
                     <div className="ml-4 space-y-1 mt-1">
                       <MenuBtn icon="fa-file-invoice-dollar" label="Laporan Keuangan" active={activeTab === 'keuangan'} onClick={() => goTo('keuangan')} dark small />
-                      <MenuBtn icon="fa-ranking-star" label="Ringkasan Penjualan" active={activeTab === 'laporan'} onClick={() => goTo('laporan')} dark small />
+                      <MenuBtn icon="fa-ranking-star" label="Ringkasan Penjualan" active={activeTab === 'penjualan'} onClick={() => goTo('penjualan')} dark small />
                     </div>
                   )}
                 </div>
@@ -3032,6 +3037,7 @@
             </div>
             <div className="flex-1 overflow-hidden">
               {keepAlive('laporan', <ReportView branch={branch} allowBranchFilter={true} />)}
+              {keepAlive('penjualan', <ReportView branch={branch} allowBranchFilter={true} detailOnly={true} />)}
               {keepAlive('keuangan', <FinancialReportView branch={branch} allowBranchFilter={true} />)}
               {keepAlive('kategori', <CategoryManagerView />)}
               {keepAlive('produk-katalog', <ProductManagerView branch={branch} />)}
@@ -8703,7 +8709,7 @@
       );
     }
 
-    function ReportView({ forceDailyOnly, branch, allowBranchFilter }) {
+    function ReportView({ forceDailyOnly, branch, allowBranchFilter, detailOnly }) {
       const [rawTrx, setRawTrx] = useState([]);
       const [showAllProducts, setShowAllProducts] = useState(false);
       const [detailTab, setDetailTab] = useState('ukuran');   // ukuran | kategori | profit
@@ -8911,7 +8917,7 @@
           <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-6 gap-4">
             <div>
               <div className="flex items-center gap-3">
-                <h2 className="text-2xl font-bold text-gray-800">Ringkasan Penjualan</h2>
+                <h2 className="text-2xl font-bold text-gray-800">{detailOnly ? 'Ringkasan Penjualan' : 'Laporan & Analitik Bisnis'}</h2>
                 <button
                   onClick={() => {
                     const branchParam = viewBranchId === 'ALL' ? undefined : viewBranchId;
@@ -8977,6 +8983,7 @@
             )}
           </div>
 
+          {!detailOnly && (<>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-6">
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-l-4 border-l-blue-500 relative overflow-hidden group">
                <i className="fa-solid fa-wallet absolute right-4 top-6 text-5xl text-blue-50 opacity-50"></i>
@@ -9075,8 +9082,9 @@
             </div>
 
           </div>
+          </>)}
 
-          {(() => {
+          {detailOnly && (() => {
             const dir = sortDir === 'desc' ? -1 : 1;
             const fmtRp = (n) => 'Rp ' + Math.round(Number(n) || 0).toLocaleString('id-ID');
             const sumSize = (sz) => stats.sizeList.filter(x => x.size === sz).reduce((a, x) => ({ qty: a.qty + x.qty, revenue: a.revenue + x.revenue, profit: a.profit + x.profit }), { qty: 0, revenue: 0, profit: 0 });
