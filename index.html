@@ -9100,23 +9100,23 @@
               body = (
                 <>
                   <div className="grid grid-cols-2 gap-3 p-4 pb-0">
-                    <div className="rounded-xl border p-3" style={{ background: '#eff6ff' }}><p className="text-[11px] font-bold uppercase text-blue-600">Total Medium</p><p className="text-xl font-black text-gray-800">{med.qty} <span className="text-xs font-semibold text-gray-500">gelas</span></p><p className="text-xs text-gray-500 font-semibold">{fmtRp(med.revenue)} · profit {fmtRp(med.profit)}</p></div>
-                    <div className="rounded-xl border p-3" style={{ background: '#fff7ed' }}><p className="text-[11px] font-bold uppercase text-orange-600">Total Jumbo</p><p className="text-xl font-black text-gray-800">{jum.qty} <span className="text-xs font-semibold text-gray-500">gelas</span></p><p className="text-xs text-gray-500 font-semibold">{fmtRp(jum.revenue)} · profit {fmtRp(jum.profit)}</p></div>
+                    <div className="rounded-xl border p-3" style={{ background: '#eff6ff' }}><p className="text-[11px] font-bold uppercase text-blue-600">Total Medium</p><p className="text-xl font-black text-gray-800">{med.qty} <span className="text-xs font-semibold text-gray-500">gelas</span></p><p className="text-xs text-gray-500 font-semibold">{fmtRp(med.revenue)} · profit {fmtRp(med.profit)} · margin {med.revenue > 0 ? Math.round(med.profit / med.revenue * 100) + '%' : '-'}</p></div>
+                    <div className="rounded-xl border p-3" style={{ background: '#fff7ed' }}><p className="text-[11px] font-bold uppercase text-orange-600">Total Jumbo</p><p className="text-xl font-black text-gray-800">{jum.qty} <span className="text-xs font-semibold text-gray-500">gelas</span></p><p className="text-xs text-gray-500 font-semibold">{fmtRp(jum.revenue)} · profit {fmtRp(jum.profit)} · margin {jum.revenue > 0 ? Math.round(jum.profit / jum.revenue * 100) + '%' : '-'}</p></div>
                   </div>
                   <div className="px-4 pt-3 flex gap-1">
                     {['Semua', 'Medium', 'Jumbo'].map(f => <button key={f} onClick={() => setSizeFilter(f)} className={`px-3 py-1 rounded-md text-xs font-bold border ${sizeFilter === f ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 bg-white'}`}>{f}</button>)}
                   </div>
                   <div className="p-2 overflow-x-auto" style={{ maxHeight: '520px', overflowY: 'auto' }}>
                     <table className="w-full text-left text-sm whitespace-nowrap">
-                      <thead><tr><th className={th}>#</th><th className={th}>Produk</th><th className={th}>Ukuran</th><th className={th + ' text-right'}>Terjual</th><th className={th + ' text-right'}>Omzet</th><th className={th + ' text-right'}>Profit</th></tr></thead>
+                      <thead><tr><th className={th}>#</th><th className={th}>Produk</th><th className={th}>Ukuran</th><th className={th + ' text-right'}>Terjual</th><th className={th + ' text-right'}>Omzet</th><th className={th + ' text-right'}>Profit</th><th className={th + ' text-right'}>Margin</th></tr></thead>
                       <tbody>
-                        {rows.length === 0 ? <tr><td colSpan="6" className="p-6 text-center text-gray-400">Belum ada penjualan pada periode ini.</td></tr> : rows.map((r, i) => (
+                        {rows.length === 0 ? <tr><td colSpan="7" className="p-6 text-center text-gray-400">Belum ada penjualan pada periode ini.</td></tr> : rows.map((r, i) => (
                           <tr key={r.name + r.size} className="border-b last:border-0 hover:bg-gray-50">
                             <td className="p-3 font-bold text-gray-400">{i + 1}</td>
                             <td className="p-3 font-bold text-gray-800">{r.name}</td>
                             <td className="p-3"><span className="px-2 py-0.5 rounded text-xs font-bold" style={{ background: r.size === 'Jumbo' ? '#ffedd5' : (r.size === 'Medium' ? '#dbeafe' : '#f3f4f6'), color: r.size === 'Jumbo' ? '#c2410c' : (r.size === 'Medium' ? '#1d4ed8' : '#4b5563') }}>{r.size}</span></td>
                             <td className="p-3 text-right font-bold">{r.qty}</td>
-                            <td className="p-3 text-right text-gray-600">{fmtRp(r.revenue)}</td>{profitCell(r.profit)}
+                            <td className="p-3 text-right text-gray-600">{fmtRp(r.revenue)}</td>{profitCell(r.profit)}<td className="p-3 text-right text-gray-500 font-semibold">{r.revenue > 0 ? Math.round(r.profit / r.revenue * 100) + '%' : '-'}</td>
                           </tr>
                         ))}
                       </tbody>
