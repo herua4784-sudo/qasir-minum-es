@@ -7580,6 +7580,16 @@
       useEffect(() => { loadRecap(); loadPayroll(); loadUmList(); }, [month, viewBranchId]);
 
       const getName = (username) => { if (username === 'DEFAULT') return 'Tarif Default (Semua Pegawai Lain)'; const e = employees.find(x => x.Username === username); return e ? e.Name : username; };
+      // Nama outlet tempat pegawai bertugas (Branch_ID bisa lebih dari satu, dipisah koma)
+      const getOutlet = (username) => {
+        const e = employees.find(x => x.Username === username);
+        if (!e || !e.Branch_ID) return '';
+        return String(e.Branch_ID).split(',').map(x => x.trim()).filter(Boolean).map(id => {
+          const b = branchList.find(bb => bb.ID === id);
+          return b ? b.Name : (branch && branch.ID === id ? branch.Name : id);
+        }).join(', ');
+      };
+      const OutletTag = ({ username }) => { const o = getOutlet(username); return o ? <span className="inline-flex items-center text-[11px] font-semibold text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5 mt-0.5"><i className="fa-solid fa-store text-[9px] mr-1"></i>{o}</span> : null; };
 
       const displayed = filterUsername === 'ALL' ? records : records.filter(r => r.Username === filterUsername);
       const displayedPayroll = filterUsername === 'ALL' ? payroll.employees : payroll.employees.filter(e => e.Username === filterUsername);
@@ -7745,7 +7755,7 @@
             <input type="month" value={month} onChange={e => setMonth(e.target.value)} className="px-3 py-2 border rounded-xl text-sm font-bold bg-white" />
             <select value={filterUsername} onChange={e => setFilterUsername(e.target.value)} className="px-3 py-2 border rounded-xl text-sm font-bold bg-white">
               <option value="ALL">Semua Pegawai</option>
-              {employees.filter(e => e.Role !== 'Owner').map(e => <option key={e.Username} value={e.Username}>{e.Name}</option>)}
+              {employees.filter(e => e.Role !== 'Owner').map(e => <option key={e.Username} value={e.Username}>{e.Name}{getOutlet(e.Username) ? ' — ' + getOutlet(e.Username) : ''}</option>)}
             </select>
             {allowBranchFilter && branchList.length > 0 && (
               <select value={viewBranchId} onChange={e => setViewBranchId(e.target.value)} className="px-3 py-2 border rounded-xl text-sm font-bold bg-white">
@@ -7782,6 +7792,7 @@
                   {editingRateUsername ? (
                     <div className="space-y-3">
                       <p className="font-bold text-gray-800 mb-1">{getName(editingRateUsername)}</p>
+                      {editingRateUsername !== 'DEFAULT' && <div className="mb-1"><OutletTag username={editingRateUsername} /></div>}
                       <div>
                         <label className="block text-sm font-semibold text-gray-700 mb-1">Tarif Shift 1 (Rp)</label>
                         <input type="number" value={rateForm.Shift_1_Rate} onChange={e => setRateForm({...rateForm, Shift_1_Rate: e.target.value})} className="w-full px-3 py-2 border rounded-lg text-sm" />
@@ -7837,7 +7848,8 @@
                           <div key={emp.Username} className="border rounded-xl p-3.5">
                             <div className="flex justify-between items-start mb-2">
                               <div>
-                                <p className="font-bold text-gray-800 text-sm">{emp.Name}</p>
+                                <p className="font-bold text-gray-800 text-sm">{emp.Name} <span className="text-[11px] font-medium text-gray-400">({emp.Username})</span></p>
+                                <OutletTag username={emp.Username} />
                                 <p className="text-[11px] text-gray-400">{custom ? 'Tarif khusus' : 'Pakai tarif Default'}</p>
                               </div>
                               <div className="flex gap-1.5 flex-shrink-0">
@@ -7877,7 +7889,7 @@
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">Pegawai</label>
                       <select value={umUsername} onChange={e => setUmUsername(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm bg-white">
-                        {employees.filter(e => e.Role !== 'Owner').map(e => <option key={e.Username} value={e.Username}>{e.Name}</option>)}
+                        {employees.filter(e => e.Role !== 'Owner').map(e => <option key={e.Username} value={e.Username}>{e.Name}{getOutlet(e.Username) ? ' — ' + getOutlet(e.Username) : ''}</option>)}
                       </select>
                     </div>
                     <div>
@@ -7960,7 +7972,7 @@
                         displayed.map((r, i) => (
                           <tr key={i} className="border-b border-gray-50 hover:bg-slate-50">
                             <td className="p-4 text-gray-500">{r.Date}</td>
-                            <td className="p-4 font-bold text-gray-800">{getName(r.Username)}</td>
+                            <td className="p-4 font-bold text-gray-800">{getName(r.Username)}<div><OutletTag username={r.Username} /></div></td>
                             <td className="p-4">
                               <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-100 text-indigo-700">{r.Keterangan}</span>
                             </td>
@@ -8010,7 +8022,7 @@
                         return (
                           <React.Fragment key={i}>
                             <tr className="border-b border-gray-50 hover:bg-slate-50 align-top">
-                              <td className="p-4 font-bold text-gray-800">{getName(emp.Username)}</td>
+                              <td className="p-4 font-bold text-gray-800">{getName(emp.Username)}<div><OutletTag username={emp.Username} /></div></td>
                               <td className="p-4 text-gray-600">{emp.Shift1Count}x <span className="text-gray-400">= Rp {emp.Shift1Total.toLocaleString('id-ID')}</span></td>
                               <td className="p-4 text-gray-600">{emp.Shift2Count}x <span className="text-gray-400">= Rp {emp.Shift2Total.toLocaleString('id-ID')}</span></td>
                               <td className="p-4 text-gray-600">{emp.DoubleCount}x <span className="text-gray-400">= Rp {emp.DoubleTotal.toLocaleString('id-ID')}</span></td>
