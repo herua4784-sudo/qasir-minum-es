@@ -2712,7 +2712,7 @@
       const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
       const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarPref);
       const [visitedTabs, setVisitedTabs] = useState(() => new Set(['laporan']));
-      const [laporanOpen, setLaporanOpen] = useState(true);
+      const [laporanOpen, setLaporanOpen] = useState(false);
       const [produkOpen, setProdukOpen] = useState(false);
       const [inventoryOpen, setInventoryOpen] = useState(false);
       const [pegawaiOpen, setPegawaiOpen] = useState(false);
@@ -2866,7 +2866,7 @@
 
     function OwnerDashboard({ user, branch, onChangeBranch, onLogout, settings, onRefreshSettings }) {
       const [activeTab, setActiveTab] = useState('laporan');
-      const [laporanOpen, setLaporanOpen] = useState(true);
+      const [laporanOpen, setLaporanOpen] = useState(false);
       const [produkOpen, setProdukOpen] = useState(false);
       const [inventoryOpen, setInventoryOpen] = useState(false);
       const [pegawaiOpen, setPegawaiOpen] = useState(false);
