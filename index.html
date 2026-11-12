@@ -8327,7 +8327,7 @@
             <div className="flex items-center gap-3">
               <div>
                 <h2 className="text-2xl font-bold text-gray-800">Riwayat Absensi</h2>
-                <p className="text-gray-500 text-sm mt-1">Catatan Clock In/Out dan Istirahat seluruh pegawai.</p>
+                <p className="text-gray-500 text-sm mt-1">Catatan Clock In/Out seluruh pegawai.</p>
               </div>
               <button onClick={loadAll} disabled={loading} className="bg-white border hover:bg-gray-50 text-gray-600 w-9 h-9 rounded-xl flex items-center justify-center transition-colors flex-shrink-0" title="Muat ulang data terbaru">
                 <i className={`fa-solid fa-arrow-rotate-right ${loading ? 'fa-spin' : ''}`}></i>
@@ -8351,8 +8351,6 @@
               {[
                 { value: 'Semua', label: 'Semua' },
                 { value: 'Clock In', label: 'Mulai Shift' },
-                { value: 'Break In', label: 'Mulai Istirahat' },
-                { value: 'Break Out', label: 'Selesai Istirahat' },
                 { value: 'Clock Out', label: 'Selesai Shift' }
               ].map(t => (
                 <button key={t.value} onClick={() => setFilterType(t.value)} className={`px-3 py-2 rounded-lg text-xs font-bold transition-all ${filterType === t.value ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>{t.label}</button>
