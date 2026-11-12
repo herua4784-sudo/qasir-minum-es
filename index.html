@@ -7334,6 +7334,13 @@
         }).catch(() => setLoadingRecords(false));
       };
 
+      const [myRecap, setMyRecap] = useState([]);
+      const loadMyRecap = () => {
+        const n = new Date();
+        runGoogleScript('getMyShiftRecap', user.username, branchId, n.getMonth() + 1, n.getFullYear())
+          .then(d => setMyRecap((d || []).slice().reverse().slice(0, 7))).catch(() => {});
+      };
+
       const loadUmStatus = () => {
         setLoadingUmStatus(true);
         runGoogleScript('getMyUangMakanToday', user.username, branchId).then(data => {
@@ -7342,7 +7349,7 @@
         }).catch(() => setLoadingUmStatus(false));
       };
 
-      useEffect(() => { loadMyRecords(); loadUmStatus(); }, []);
+      useEffect(() => { loadMyRecords(); loadUmStatus(); loadMyRecap(); }, []);
 
       const handleAbsen = async (type, shift) => {
         setLoading(true);
@@ -7351,6 +7358,7 @@
           if(res.success) {
             notify.alert(`Berhasil melakukan ${type} pada pukul ${res.timestamp}`, "Absensi Berhasil", "success");
             loadMyRecords(); // langsung muncul di riwayat, kasir bisa cek langsung
+            loadMyRecap();
           } else {
             notify.alert("Gagal mencatat absensi.", "Error", "error");
           }
@@ -7421,7 +7429,7 @@
                   </button>
                   <button onClick={() => handlePilihShift('SHIFT 2')} disabled={loading} className="w-full bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border text-gray-700 font-bold py-3.5 rounded-xl transition-colors text-left px-4">
                     <span className="block">Shift 2</span>
-                    <span className="text-xs text-gray-400 font-normal">16:00 - 22:00</span>
+                    <span className="text-xs text-gray-400 font-normal">15:00 - 22:00</span>
                   </button>
                   <button onClick={() => handlePilihShift('SHIFT 1, SHIFT 2')} disabled={loading} className="w-full bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border text-gray-700 font-bold py-3.5 rounded-xl transition-colors text-left px-4">
                     <span className="block">Shift 1 & 2</span>
@@ -7497,6 +7505,28 @@
                     <span className="text-xs text-gray-500 font-semibold">{r.Timestamp}</span>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* Keterangan absensi (telat / pulang lebih awal / tepat waktu) — terlihat oleh semua akun untuk datanya sendiri */}
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-150 max-w-sm w-full mb-6 flex-shrink-0">
+            <h3 className="font-bold text-gray-800 mb-1">Keterangan Absensi Saya</h3>
+            <p className="text-[11px] text-gray-400 mb-3">Jadwal: Shift 1 jam 08.00-16.00 · Shift 2 jam 15.00-22.00</p>
+            {myRecap.length === 0 ? (
+              <p className="text-center text-gray-400 text-sm py-3">Belum ada data absensi bulan ini.</p>
+            ) : (
+              <div className="space-y-2">
+                {myRecap.map((r, i) => {
+                  const cls = (st) => String(st).indexOf('Absen tepat waktu') === 0 ? { color: '#059669' } : (st === 'Belum Clock Out' ? { color: '#9ca3af' } : { color: '#e11d48', fontWeight: 700 });
+                  return (
+                    <div key={i} className="bg-slate-50 rounded-xl px-3 py-2.5">
+                      <div className="flex justify-between text-xs font-bold text-gray-700"><span>{r.Date}</span><span>{r.Keterangan}</span></div>
+                      <p className="text-xs mt-1" style={cls(r.StatusMasuk)}><i className="fa-solid fa-right-to-bracket mr-1"></i>Masuk {r.JamMasuk} — {r.StatusMasuk}</p>
+                      <p className="text-xs mt-0.5" style={cls(r.StatusPulang)}><i className="fa-solid fa-right-from-bracket mr-1"></i>Pulang {r.JamPulang} — {r.StatusPulang}</p>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -7602,11 +7632,11 @@
         if (r.Keterangan === 'SHIFT 1, SHIFT 2') summaryByUser[r.Username].double++;
         else if (r.Keterangan === 'SHIFT 1') summaryByUser[r.Username].shift1++;
         else summaryByUser[r.Username].shift2++;
-        if (r.StatusMasuk.indexOf('Terlambat') === 0) summaryByUser[r.Username].terlambat++;
+        if (String(r.StatusMasuk).indexOf('Masuk telat') === 0) summaryByUser[r.Username].terlambat++;
       });
 
       const statusClass = (status) => {
-        if (status === 'Tepat Waktu') return 'text-emerald-600';
+        if (String(status).indexOf('Absen tepat waktu') === 0) return 'text-emerald-600';
         if (status === 'Belum Clock Out') return 'text-gray-400';
         return 'text-rose-600 font-bold';
       };
@@ -7739,7 +7769,7 @@
           <div className="mb-4 flex items-center gap-3">
             <div>
               <h2 className="text-2xl font-bold text-gray-800">Rekap Shift & Gaji</h2>
-              <p className="text-gray-500 text-sm mt-1">Shift dan status tepat waktu dihitung otomatis dari jam Clock In/Out sungguhan (Shift 1: 08:00-16:00, Shift 2: 16:00-22:00).</p>
+              <p className="text-gray-500 text-sm mt-1">Shift dan status tepat waktu dihitung otomatis dari jam Clock In/Out sungguhan (Shift 1: 08:00-16:00, Shift 2: 15:00-22:00).</p>
             </div>
             <button onClick={() => { loadRecap(); loadPayroll(); loadUmList(); }} disabled={loading || loadingPayroll || loadingUmList} className="bg-white border hover:bg-gray-50 text-gray-600 w-9 h-9 rounded-xl flex items-center justify-center transition-colors flex-shrink-0" title="Muat ulang data terbaru">
               <i className={`fa-solid fa-arrow-rotate-right ${(loading || loadingPayroll || loadingUmList) ? 'fa-spin' : ''}`}></i>
