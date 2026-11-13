@@ -8433,6 +8433,7 @@
       const [expenseModalOpen, setExpenseModalOpen] = useState(false);
       const [expenseDate, setExpenseDate] = useState('');
       const [expenseCategory, setExpenseCategory] = useState('Sewa');
+      const [plStale, setPlStale] = useState(false);
       const [expCats, setExpCats] = useState([]);
       const [catManagerOpen, setCatManagerOpen] = useState(false);
       const [newCatName, setNewCatName] = useState('');
@@ -8475,10 +8476,23 @@
         const [yearStr, monthStr] = rangeStart.split('-');
         const branchParam = viewBranchId === 'ALL' ? undefined : viewBranchId;
         if (!rangeValid) { setLoadingPl(false); return; }
+        const plKey = 'plreport:' + JSON.stringify([branchParam, Number(monthStr), Number(yearStr), rangeArgs[0], rangeArgs[1]]);
+        let gotFresh = false;
+        // 1) Tampilkan hasil terakhir yang tersimpan SEKETIKA (kalau ada), lalu 2) perbarui dari server.
+        offlineCacheGet(plKey).then(cached => {
+          if (cached !== undefined && !gotFresh) {
+            setPlData(cached); setExpenses(cached.expenseRows || []);
+            setLoadingPl(false); setLoadingExpenses(false); setPlStale(true);
+          }
+        }).catch(() => {});
         runGoogleScript('getProfitLossReport', branchParam, Number(monthStr), Number(yearStr), rangeArgs[0], rangeArgs[1]).then(data => {
+          gotFresh = true;
           setPlData(data);
-          setLoadingPl(false);
-        }).catch(() => setLoadingPl(false));
+          setExpenses((data && data.expenseRows) || []);
+          setPlStale(false);
+          setLoadingPl(false); setLoadingExpenses(false);
+          try { offlineCacheSet(plKey, data); } catch (e) {}
+        }).catch(() => { setPlStale(false); setLoadingPl(false); setLoadingExpenses(false); });
       };
 
       const loadInv = () => {
@@ -8490,18 +8504,11 @@
         }).catch(() => setLoadingInv(false));
       };
 
-      const loadExpenses = () => {
-        setLoadingExpenses(true);
-        const [yearStr, monthStr] = rangeStart.split('-');
-        const branchParam = viewBranchId === 'ALL' ? undefined : viewBranchId;
-        if (!rangeValid) { setLoadingExpenses(false); return; }
-        runGoogleScript('getOperationalExpenses', branchParam, Number(monthStr), Number(yearStr), rangeArgs[0], rangeArgs[1]).then(data => {
-          setExpenses(data || []);
-          setLoadingExpenses(false);
-        }).catch(() => setLoadingExpenses(false));
-      };
+      const loadExpenses = () => loadPl(); // daftar biaya kini ikut dalam hasil laporan (1 panggilan, bukan 3)
 
-      useEffect(() => { loadPl(); loadInv(); loadExpenses(); }, [viewBranchId, rangeStart, rangeEnd]);
+      useEffect(() => { loadPl(); }, [viewBranchId, rangeStart, rangeEnd]);
+      // Nilai Persediaan hanya dimuat saat tab-nya dibuka (tidak ikut memperlambat Laba Rugi).
+      useEffect(() => { if (subTab === 'persediaan') loadInv(); }, [subTab, viewBranchId]);
 
       const openExpenseModal = () => {
         loadExpCats();
@@ -8526,7 +8533,6 @@
           if (res.success) {
             notify.alert("Biaya operasional berhasil dicatat.", "Berhasil", "success");
             setExpenseModalOpen(false);
-            loadExpenses();
             loadPl();
           } else {
             notify.alert("Gagal mencatat: " + res.message, "Gagal", "error");
@@ -8542,7 +8548,6 @@
           const res = await runGoogleScript('deleteOperationalExpense', exp.ID);
           if (res.success) {
             notify.alert("Berhasil dihapus.", "Terhapus", "success");
-            loadExpenses();
             loadPl();
           } else {
             notify.alert("Gagal menghapus: " + res.message, "Gagal", "error");
@@ -8562,8 +8567,8 @@
               <h2 className="text-2xl font-bold text-gray-800">Laporan Keuangan</h2>
               <p className="text-gray-500 text-sm mt-1">Laba Rugi & Nilai Persediaan — dihitung otomatis dari data penjualan, resep, dan gaji.</p>
             </div>
-            <button onClick={() => { loadPl(); loadInv(); }} disabled={loadingPl || loadingInv} className="bg-white border hover:bg-gray-50 text-gray-600 w-9 h-9 rounded-xl flex items-center justify-center transition-colors flex-shrink-0" title="Muat ulang data terbaru">
-              <i className={`fa-solid fa-arrow-rotate-right ${(loadingPl || loadingInv) ? 'fa-spin' : ''}`}></i>
+            <button onClick={() => { loadPl(); if (subTab === 'persediaan') loadInv(); }} disabled={loadingPl || (subTab === 'persediaan' && loadingInv)} className="bg-white border hover:bg-gray-50 text-gray-600 w-9 h-9 rounded-xl flex items-center justify-center transition-colors flex-shrink-0" title="Muat ulang data terbaru">
+              <i className={`fa-solid fa-arrow-rotate-right ${(loadingPl || plStale || (subTab === 'persediaan' && loadingInv)) ? 'fa-spin' : ''}`}></i>
             </button>
           </div>
 
@@ -8648,7 +8653,7 @@
                   </div>
                   <p className="text-[11px] text-gray-400 mt-5 pt-4 border-t">
                     <i className="fa-solid fa-circle-info mr-1"></i>
-                    Dari {plData.jumlahTransaksi} transaksi {periodWord}.
+                    Dari {plData.jumlahTransaksi} transaksi {periodWord}.{plStale && <span style={{ color: '#d97706', fontWeight: 700 }}> · Menampilkan data tersimpan, sedang memperbarui…</span>}
                   </p>
                 </div>
 
