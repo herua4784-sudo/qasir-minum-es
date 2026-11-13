@@ -8433,6 +8433,32 @@
       const [expenseModalOpen, setExpenseModalOpen] = useState(false);
       const [expenseDate, setExpenseDate] = useState('');
       const [expenseCategory, setExpenseCategory] = useState('Sewa');
+      const [expCats, setExpCats] = useState([]);
+      const [catManagerOpen, setCatManagerOpen] = useState(false);
+      const [newCatName, setNewCatName] = useState('');
+      const [editingCatId, setEditingCatId] = useState(null);
+      const [editingCatName, setEditingCatName] = useState('');
+      const [catBusy, setCatBusy] = useState(false);
+      const loadExpCats = () => runGoogleScript('getExpenseCategories').then(list => {
+        const arr = list || [];
+        setExpCats(arr);
+        setExpenseCategory(prev => (arr.some(c => c.Name === prev) ? prev : (arr.length ? arr[0].Name : 'Lainnya')));
+      }).catch(() => {});
+      const runCatAction = async (action, data, okMsg) => {
+        setCatBusy(true);
+        try {
+          const res = await runGoogleScript('manageExpenseCategory', action, data);
+          if (res && res.success) {
+            if (okMsg) notify.alert(okMsg + (res.updated ? ` (${res.updated} catatan biaya lama ikut diperbarui)` : ''), 'Berhasil', 'success');
+            setNewCatName(''); setEditingCatId(null);
+            await loadExpCats();
+            if (action === 'edit' || action === 'delete') loadExpenses();
+          } else {
+            notify.alert((res && res.message) || 'Gagal menyimpan kategori.', 'Gagal', 'error');
+          }
+        } catch (e) { notify.alert('Masalah koneksi ke server.', 'Koneksi Bermasalah', 'error'); }
+        setCatBusy(false);
+      };
       const [expenseDescription, setExpenseDescription] = useState('');
       const [expenseAmount, setExpenseAmount] = useState('');
       const [savingExpense, setSavingExpense] = useState(false);
@@ -8478,8 +8504,9 @@
       useEffect(() => { loadPl(); loadInv(); loadExpenses(); }, [viewBranchId, rangeStart, rangeEnd]);
 
       const openExpenseModal = () => {
+        loadExpCats();
         setExpenseDate(new Date().toISOString().substring(0, 10));
-        setExpenseCategory('Sewa');
+        setExpenseCategory(expCats.length ? expCats[0].Name : 'Sewa');
         setExpenseDescription('');
         setExpenseAmount('');
         setExpenseModalOpen(true);
@@ -8675,14 +8702,12 @@
                     <input type="date" value={expenseDate} onChange={e => setExpenseDate(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Kategori</label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-sm font-semibold text-gray-700">Kategori</label>
+                      <button type="button" onClick={() => setCatManagerOpen(true)} className="text-xs font-bold text-indigo-600 hover:text-indigo-800"><i className="fa-solid fa-pen-to-square mr-1"></i>Kelola Kategori</button>
+                    </div>
                     <select value={expenseCategory} onChange={e => setExpenseCategory(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm bg-white">
-                      <option value="Sewa">Sewa</option>
-                      <option value="Listrik">Listrik</option>
-                      <option value="Air">Air</option>
-                      <option value="Internet">Internet</option>
-                      <option value="Perlengkapan">Perlengkapan</option>
-                      <option value="Lainnya">Lainnya</option>
+                      {(expCats.length ? expCats.map(c => c.Name) : ['Sewa', 'Listrik', 'Air', 'Internet', 'Perlengkapan', 'Lainnya']).map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
                   </div>
                   <div>
@@ -8697,6 +8722,44 @@
                     {savingExpense ? <i className="fa-solid fa-spinner fa-spin"></i> : 'Simpan'}
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL KELOLA KATEGORI BIAYA */}
+          {catManagerOpen && (
+            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4" style={{ zIndex: 60 }}>
+              <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-sm" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+                <div className="flex justify-between items-center mb-3 border-b pb-3">
+                  <h3 className="font-bold text-xl text-gray-800">Kelola Kategori Biaya</h3>
+                  <button onClick={() => { setCatManagerOpen(false); setEditingCatId(null); }} className="text-gray-400 hover:bg-gray-100 w-8 h-8 rounded-full"><i className="fa-solid fa-xmark"></i></button>
+                </div>
+                <div className="flex gap-2 mb-3">
+                  <input type="text" value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && newCatName.trim() && !catBusy) runCatAction('add', { Name: newCatName }, 'Kategori ditambahkan.'); }} placeholder="Nama kategori baru" className="flex-1 px-3 py-2 border rounded-lg text-sm" />
+                  <button onClick={() => runCatAction('add', { Name: newCatName }, 'Kategori ditambahkan.')} disabled={catBusy || !newCatName.trim()} className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white font-bold px-4 rounded-lg text-sm"><i className="fa-solid fa-plus mr-1"></i>Tambah</button>
+                </div>
+                <div className="space-y-2" style={{ overflowY: 'auto' }}>
+                  {expCats.map(c => (
+                    <div key={c.ID} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+                      {editingCatId === c.ID ? (
+                        <>
+                          <input type="text" autoFocus value={editingCatName} onChange={e => setEditingCatName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && editingCatName.trim() && !catBusy) runCatAction('edit', { ID: c.ID, Name: editingCatName }, 'Kategori diubah.'); }} className="flex-1 px-2 py-1 border rounded text-sm mr-2" />
+                          <button onClick={() => runCatAction('edit', { ID: c.ID, Name: editingCatName }, 'Kategori diubah.')} disabled={catBusy || !editingCatName.trim()} className="text-emerald-600 font-bold text-xs px-2 py-1">Simpan</button>
+                          <button onClick={() => setEditingCatId(null)} className="text-gray-400 font-bold text-xs px-2 py-1">Batal</button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-sm font-bold text-gray-700">{c.Name}</span>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => { setEditingCatId(c.ID); setEditingCatName(c.Name); }} className="text-indigo-600 hover:bg-indigo-50 font-bold text-xs px-2 py-1 rounded">Edit</button>
+                            <button onClick={() => notify.confirm(`Hapus kategori "${c.Name}"? Catatan biaya lama dengan kategori ini tetap tersimpan dan tetap dihitung.`, () => runCatAction('delete', { ID: c.ID }, 'Kategori dihapus.'))} className="text-red-400 hover:text-red-600 w-6 h-6 flex items-center justify-center"><i className="fa-solid fa-trash-can text-xs"></i></button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-gray-400 mt-3">Mengubah nama kategori ikut memperbarui catatan biaya lama yang memakai nama itu.</p>
               </div>
             </div>
           )}
