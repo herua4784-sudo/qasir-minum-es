@@ -154,11 +154,11 @@
       });
     }
 
-    // Siapkan laporan "Bulan Ini" di latar belakang begitu Owner/Admin login, supaya saat
+    // Siapkan laporan "Hari Ini" di latar belakang begitu Owner/Admin login, supaya saat
     // Laporan Keuangan dibuka angkanya sudah ada (disimpan dengan kunci yang sama persis).
     function prefetchFinancialReport(branchParam) {
       try {
-        const pr = resolvePeriodRange('Bulan Ini');
+        const pr = resolvePeriodRange('Hari Ini');
         const f = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
         const s0 = f(pr.start), e0 = f(pr.end);
         const [y, m] = s0.split('-');
@@ -8428,7 +8428,7 @@
       const localISO = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
       const [month, setMonth] = useState(() => localISO(new Date()).substring(0, 7));
       // Periode laporan: per bulan, atau rentang tanggal bebas.
-      const [timeFilter, setTimeFilter] = useState('Bulan Ini');
+      const [timeFilter, setTimeFilter] = useState('Hari Ini');
       const periodMode = 'range'; // laporan selalu memakai rentang tanggal (hasil pilihan periode)
       const [startDate, setStartDate] = useState(() => localISO(new Date()).substring(0, 8) + '01');
       const [endDate, setEndDate] = useState(() => localISO(new Date()));
