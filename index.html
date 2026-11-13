@@ -154,6 +154,36 @@
       });
     }
 
+    // "Tampil dulu dari simpanan, perbarui di belakang": data terakhir (disimpan di perangkat)
+    // ditampilkan SEKETIKA, lalu diganti hasil terbaru dari server begitu tiba. Menu terasa ringan.
+    function swrFetch(key, fetchFn, apply, onFail, skipCache) {
+      let fresh = false, usedCache = false;
+      if (!skipCache) offlineCacheGet('swr:' + key).then(c => {
+        if (c !== undefined && !fresh) { usedCache = true; apply(c, true); }
+      }).catch(() => {});
+      fetchFn().then(d => {
+        fresh = true;
+        try { offlineCacheSet('swr:' + key, d); } catch (e) {}
+        apply(d, false);
+      }).catch(e => { if (!usedCache && onFail) onFail(e); });
+    }
+    const fetchProdBatchData = (branchId) => Promise.all([
+      cachedFetch('ingredients_' + branchId, () => runGoogleScript('getIngredients', branchId)),
+      cachedFetch('prodrecipes_' + branchId, () => runGoogleScript('getProductionRecipes', branchId))
+    ]).then(([ing, rec]) => ({ ing: ing || [], rec: rec || [] }));
+    const fetchHistData = (branchId) => Promise.all([
+      runGoogleScript('getRecentStockMovements', branchId, 600, 'Semua', true),
+      runGoogleScript('getIngredients', branchId).catch(() => [])
+    ]).then(([mv, ing]) => ({ mv: mv || [], ing: ing || [] }));
+    // Siapkan layar Inventory di latar belakang begitu login (disimpan dengan kunci yang sama).
+    function prefetchInventoryScreens(branchId) {
+      try {
+        if (!branchId) return;
+        fetchProdBatchData(branchId).then(d => { try { offlineCacheSet('swr:prodbatch:' + branchId, d); offlineCacheSet('swr:ing:' + branchId, d.ing); } catch (e) {} }).catch(() => {});
+        fetchHistData(branchId).then(d => { try { offlineCacheSet('swr:hist:' + branchId, d); } catch (e) {} }).catch(() => {});
+      } catch (e) {}
+    }
+
     // Siapkan laporan "Hari Ini" di latar belakang begitu Owner/Admin login, supaya saat
     // Laporan Keuangan dibuka angkanya sudah ada (disimpan dengan kunci yang sama persis).
     function prefetchFinancialReport(branchParam) {
@@ -2647,6 +2677,7 @@
     }
 
     function AdminDashboard({ user, branch, onLogout, settings }) {
+      useEffect(() => { const t = setTimeout(() => prefetchInventoryScreens(branch ? branch.ID : 'BR001'), 6000); return () => clearTimeout(t); }, []);
       const [activeTab, setActiveTab] = useState('pos');
       const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
       const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarPref);
@@ -2721,7 +2752,7 @@
     }
 
     function AdministratorDashboard({ user, branch, onLogout, settings }) {
-      useEffect(() => { const t = setTimeout(() => prefetchFinancialReport(branch ? branch.ID : 'BR001'), 2500); return () => clearTimeout(t); }, []);
+      useEffect(() => { const t = setTimeout(() => prefetchFinancialReport(branch ? branch.ID : 'BR001'), 2500); const t2 = setTimeout(() => prefetchInventoryScreens(branch ? branch.ID : 'BR001'), 6000); return () => { clearTimeout(t); clearTimeout(t2); }; }, []);
       const [activeTab, setActiveTab] = useState('laporan');
       const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
       const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarPref);
@@ -2879,7 +2910,7 @@
     }
 
     function OwnerDashboard({ user, branch, onChangeBranch, onLogout, settings, onRefreshSettings }) {
-      useEffect(() => { const t = setTimeout(() => prefetchFinancialReport(undefined), 2500); return () => clearTimeout(t); }, []);
+      useEffect(() => { const t = setTimeout(() => prefetchFinancialReport(undefined), 2500); const t2 = setTimeout(() => prefetchInventoryScreens(branch ? branch.ID : 'BR001'), 6000); return () => { clearTimeout(t); clearTimeout(t2); }; }, []);
       const [activeTab, setActiveTab] = useState('laporan');
       const [laporanOpen, setLaporanOpen] = useState(false);
       const [produkOpen, setProdukOpen] = useState(false);
@@ -5340,20 +5371,17 @@
       const [filter, setFilter] = useState(wasteOnly ? 'terbuang' : 'semua');
       const [visible, setVisible] = useState(15);
       const reqRef = useRef(0);
-      const load = () => {
+      const load = (skipCache) => {
         const my = ++reqRef.current;
         setLoading(true);
-        Promise.all([
-          runGoogleScript('getRecentStockMovements', branchId, 1000, 'Semua', true),
-          runGoogleScript('getIngredients', branchId).catch(() => [])
-        ]).then(([mv, ing]) => {
+        swrFetch('hist:' + branchId, () => fetchHistData(branchId), (d) => {
           if (my !== reqRef.current) return;
-          const m = {}; (ing || []).forEach(i => { m[i.ID] = i; });
-          setIngs(m); setMoves(mv || []); setLoading(false);
-        }).catch(() => { if (my === reqRef.current) setLoading(false); });
+          const m = {}; (d.ing || []).forEach(i => { m[i.ID] = i; });
+          setIngs(m); setMoves(d.mv || []); setLoading(false);
+        }, () => { if (my === reqRef.current) setLoading(false); }, skipCache === true);
       };
-      useEffect(() => { setVisible(15); load(); }, [branchId, refreshKey]);
-      useQueueWatcher(() => load());
+      useEffect(() => { setVisible(15); load(refreshKey > 0); }, [branchId, refreshKey]);
+      useQueueWatcher(() => load(true));
 
       const nameOf = (id) => (ings[id] ? ings[id].Name : id);
       const unitOf = (id) => (ings[id] ? ings[id].Unit : '');
@@ -5416,7 +5444,7 @@
         <div className="px-6 pb-10 max-w-xl">
           <div className="flex items-center justify-between mb-2 border-t pt-5">
             <h3 className="font-bold text-gray-800"><i className="fa-solid fa-clock-rotate-left text-indigo-500 mr-2"></i>{kind === 'batch' ? 'Riwayat Produksi Batch' : (wasteOnly ? 'Riwayat Stok Terbuang' : 'Riwayat Koreksi & Stok Terbuang')}</h3>
-            <button type="button" onClick={load} className="text-xs font-bold text-indigo-600">Muat ulang</button>
+            <button type="button" onClick={() => load(true)} className="text-xs font-bold text-indigo-600">Muat ulang</button>
           </div>
           {kind !== 'batch' && !wasteOnly && <div className="flex gap-2 mb-3 flex-wrap">{chip('semua', 'Semua')}{chip('koreksi', 'Koreksi')}{chip('terbuang', 'Stok Terbuang')}</div>}
           {loading && moves.length === 0 ? <p className="text-center text-gray-400 text-sm py-6">Memuat riwayat...</p>
@@ -5447,16 +5475,16 @@
       const notify = useNotification();
       const branchId = branch ? branch.ID : 'BR001';
 
-      const loadData = () => {
+      const loadData = (fresh) => {
         setLoading(true);
-        Promise.all([cachedFetch('ingredients_' + branchId, () => runGoogleScript('getIngredients', branchId)), cachedFetch('prodrecipes_' + branchId, () => runGoogleScript('getProductionRecipes', branchId))])
-          .then(([ing, rec]) => {
-            setIngredients(ing || []);
-            setProductionRecipes(rec || []);
-            setLoading(false);
-            const candidates = (ing || []).filter(i => Number(i.Batch_Yield) > 0);
-            setOutputId(prev => prev || (candidates.length > 0 ? candidates[0].ID : ''));
-          }).catch(() => setLoading(false));
+        swrFetch('prodbatch:' + branchId, () => fetchProdBatchData(branchId), (d) => {
+          const ing = d.ing, rec = d.rec;
+          setIngredients(ing || []);
+          setProductionRecipes(rec || []);
+          setLoading(false);
+          const candidates = (ing || []).filter(i => Number(i.Batch_Yield) > 0);
+          setOutputId(prev => prev || (candidates.length > 0 ? candidates[0].ID : ''));
+        }, () => setLoading(false), fresh === true);
       };
       useEffect(() => { loadData(); }, [branchId]);
 
@@ -5499,7 +5527,7 @@
               invalidateCache('ingredients_' + branchId);
               notify.alert(`Produksi berhasil! Stok "${selectedOutput.Name}" sekarang: ${Number(res.newStock).toLocaleString('id-ID', { maximumFractionDigits: 2 })} ${res.unit}`, "Berhasil Diproduksi", "success");
               setBatches(1);
-              loadData();
+              loadData(true);
               if (onDone) onDone();
             } else {
               notify.alert("Gagal produksi: " + res.message, "Gagal", "error");
@@ -6412,14 +6440,14 @@
       const isWasteReasonText = /^\s*(dibuang|rusak|tumpah)/i.test(reason || '');
       const showLeftoverDate = type === 'Keluar' && isWasteReasonText;
 
-      const loadData = () => {
+      const loadData = (fresh) => {
         setLoading(true);
         setLoadError(false);
-        cachedFetch('ingredients_' + branchId, () => runGoogleScript('getIngredients', branchId)).then(data => {
+        swrFetch('ing:' + branchId, () => cachedFetch('ingredients_' + branchId, () => runGoogleScript('getIngredients', branchId)), (data) => {
           setIngredients(data || []);
           setLoading(false);
           setIngredientId(prev => (data && data.length > 0) ? (data.find(d => d.ID === prev) ? prev : data[0].ID) : '');
-        }).catch(() => { setLoading(false); setLoadError(true); });
+        }, () => { setLoading(false); setLoadError(true); }, fresh === true);
       };
       useEffect(() => { loadData(); }, [branchId]);
 
@@ -6469,7 +6497,7 @@
             setReason('');
             setWasteNote('');
             setLeftoverDate('');
-            loadData();
+            loadData(true);
             if (onDone) onDone();
           } else {
             notify.alert("Gagal mencatat: " + res.message, "Gagal", "error");
