@@ -5328,7 +5328,116 @@
       );
     }
 
+    // ==========================================
+    // RIWAYAT PER MENU — dipakai di bawah form Produksi Batch (kind="batch") dan
+    // Koreksi Stok / Stok Terbuang (kind="koreksi"), supaya tiap menu punya riwayatnya sendiri.
+    // ==========================================
+    function MovementHistoryPanel({ branch, kind, refreshKey, wasteOnly }) {
+      const branchId = branch ? branch.ID : 'BR001';
+      const [moves, setMoves] = useState([]);
+      const [ings, setIngs] = useState({});
+      const [loading, setLoading] = useState(true);
+      const [filter, setFilter] = useState(wasteOnly ? 'terbuang' : 'semua');
+      const [visible, setVisible] = useState(15);
+      const reqRef = useRef(0);
+      const load = () => {
+        const my = ++reqRef.current;
+        setLoading(true);
+        Promise.all([
+          runGoogleScript('getRecentStockMovements', branchId, 1000, 'Semua', true),
+          runGoogleScript('getIngredients', branchId).catch(() => [])
+        ]).then(([mv, ing]) => {
+          if (my !== reqRef.current) return;
+          const m = {}; (ing || []).forEach(i => { m[i.ID] = i; });
+          setIngs(m); setMoves(mv || []); setLoading(false);
+        }).catch(() => { if (my === reqRef.current) setLoading(false); });
+      };
+      useEffect(() => { setVisible(15); load(); }, [branchId, refreshKey]);
+      useQueueWatcher(() => load());
+
+      const nameOf = (id) => (ings[id] ? ings[id].Name : id);
+      const unitOf = (id) => (ings[id] ? ings[id].Unit : '');
+      const fmtQ = (q) => Number(q).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+      const R = (m) => String(m.Reason || '');
+      const isBatch = (m) => R(m).indexOf('Hasil Produksi Batch') === 0 || R(m).indexOf('Dipakai untuk Produksi Batch') === 0;
+      const isOther = (m) => R(m).indexOf('Penjualan Otomatis') === 0 || R(m).indexOf('Pembatalan Transaksi') === 0 || R(m).indexOf('Ambil dari Gudang') === 0 || R(m).indexOf('Beli di luar gudang') === 0;
+      const isWaste = (m) => /^\s*(dibuang|rusak|tumpah)/i.test(R(m));
+
+      let body = null;
+      let total = 0;
+      if (kind === 'batch') {
+        // Kelompokkan per kali masak (Reference sama = satu batch)
+        const groups = {}; const order = [];
+        moves.filter(isBatch).forEach(m => {
+          const k = String(m.Reference || m.ID);
+          if (!groups[k]) { groups[k] = { key: k, date: m.Date, who: k.split(' / ')[0], out: [], used: [] }; order.push(k); }
+          if (R(m).indexOf('Hasil Produksi Batch') === 0) groups[k].out.push(m); else groups[k].used.push(m);
+        });
+        total = order.length;
+        body = order.slice(0, visible).map(k => {
+          const g = groups[k];
+          return (
+            <div key={k} className="bg-white rounded-xl border p-3">
+              <div className="flex justify-between items-start gap-2">
+                <div>
+                  {g.out.map((m, i) => <p key={i} className="font-bold text-emerald-700 text-sm"><i className="fa-solid fa-flask mr-1"></i>+{fmtQ(m.Qty)} {unitOf(m.Ingredient_ID)} {nameOf(m.Ingredient_ID)}</p>)}
+                  <p className="text-[11px] text-gray-500 mt-0.5">Bahan terpakai: {g.used.length ? g.used.map(m => `${nameOf(m.Ingredient_ID)} ${fmtQ(m.Qty)} ${unitOf(m.Ingredient_ID)}`).join(', ') : '-'}</p>
+                </div>
+                <div className="text-right flex-shrink-0"><p className="text-xs font-bold text-gray-700">{g.date}</p><p className="text-[11px] text-gray-400">{g.who}</p></div>
+              </div>
+            </div>
+          );
+        });
+      } else {
+        const list = moves.filter(m => !isBatch(m) && !isOther(m)).filter(m => filter === 'semua' ? true : (filter === 'terbuang' ? isWaste(m) : !isWaste(m)));
+        total = list.length;
+        body = list.slice(0, visible).map((m, i) => {
+          const masuk = m.Type === 'Masuk';
+          const waste = isWaste(m);
+          return (
+            <div key={m.ID || i} className="bg-white rounded-xl border p-3 flex justify-between items-start gap-2">
+              <div className="min-w-0">
+                <p className="font-bold text-gray-800 text-sm truncate">{nameOf(m.Ingredient_ID)}</p>
+                <p className="text-[11px] text-gray-500 break-words">{waste && <span style={{ background: '#ffe4e6', color: '#be123c', borderRadius: '6px', padding: '1px 6px', fontWeight: 700, marginRight: '4px' }}>Terbuang</span>}{R(m)}</p>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="font-bold text-sm" style={{ color: masuk ? '#059669' : '#e11d48' }}>{masuk ? '+' : '-'}{fmtQ(m.Qty)} {unitOf(m.Ingredient_ID)}</p>
+                <p className="text-[11px] text-gray-500">{m.Date}</p>
+                <p className="text-[11px] text-gray-400">{String(m.Reference || '').split(' / ')[0]}</p>
+              </div>
+            </div>
+          );
+        });
+      }
+
+      const chip = (id, label) => <button key={id} type="button" onClick={() => { setFilter(id); setVisible(15); }} style={{ padding: '4px 12px', borderRadius: '999px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', border: filter === id ? '1px solid #4f46e5' : '1px solid #d1d5db', background: filter === id ? '#eef2ff' : '#fff', color: filter === id ? '#4338ca' : '#6b7280' }}>{label}</button>;
+
+      return (
+        <div className="px-6 pb-10 max-w-xl">
+          <div className="flex items-center justify-between mb-2 border-t pt-5">
+            <h3 className="font-bold text-gray-800"><i className="fa-solid fa-clock-rotate-left text-indigo-500 mr-2"></i>{kind === 'batch' ? 'Riwayat Produksi Batch' : (wasteOnly ? 'Riwayat Stok Terbuang' : 'Riwayat Koreksi & Stok Terbuang')}</h3>
+            <button type="button" onClick={load} className="text-xs font-bold text-indigo-600">Muat ulang</button>
+          </div>
+          {kind !== 'batch' && !wasteOnly && <div className="flex gap-2 mb-3 flex-wrap">{chip('semua', 'Semua')}{chip('koreksi', 'Koreksi')}{chip('terbuang', 'Stok Terbuang')}</div>}
+          {loading && moves.length === 0 ? <p className="text-center text-gray-400 text-sm py-6">Memuat riwayat...</p>
+            : total === 0 ? <p className="text-center text-gray-400 text-sm py-6 bg-white border rounded-xl">Belum ada riwayat.</p>
+            : <div className="space-y-2">{body}</div>}
+          {total > visible && <button type="button" onClick={() => setVisible(visible + 15)} className="w-full mt-3 py-2 text-sm font-bold text-indigo-600 bg-indigo-50 rounded-lg">Tampilkan lebih banyak ({total - visible} lagi)</button>}
+        </div>
+      );
+    }
+
     function ProduceBatchView({ user, branch }) {
+      const [histKey, setHistKey] = useState(0);
+      return (
+        <div className="h-full overflow-y-auto">
+          <ProduceBatchForm user={user} branch={branch} onDone={() => setHistKey(k => k + 1)} />
+          <MovementHistoryPanel branch={branch} kind="batch" refreshKey={histKey} />
+        </div>
+      );
+    }
+
+    function ProduceBatchForm({ user, branch, onDone }) {
       const [ingredients, setIngredients] = useState([]);
       const [productionRecipes, setProductionRecipes] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -5391,6 +5500,7 @@
               notify.alert(`Produksi berhasil! Stok "${selectedOutput.Name}" sekarang: ${Number(res.newStock).toLocaleString('id-ID', { maximumFractionDigits: 2 })} ${res.unit}`, "Berhasil Diproduksi", "success");
               setBatches(1);
               loadData();
+              if (onDone) onDone();
             } else {
               notify.alert("Gagal produksi: " + res.message, "Gagal", "error");
             }
@@ -5418,7 +5528,7 @@
       }
 
       return (
-        <div className="p-6 h-full overflow-y-auto max-w-xl">
+        <div className="p-6 max-w-xl">
           <div className="mb-6">
             <h2 className="text-2xl font-bold text-gray-800">Produksi Batch (Racikan)</h2>
             <p className="text-gray-500 text-sm mt-1">Masak/olah bahan mentah jadi bahan siap pakai, misal Daun Teh + Air jadi Air Teh. Stok bahan mentah berkurang, stok hasil racikan bertambah.</p>
@@ -6275,6 +6385,16 @@
     }
 
     function StockMovementFormView({ user, branch, wasteOnly }) {
+      const [histKey, setHistKey] = useState(0);
+      return (
+        <div className="h-full overflow-y-auto">
+          <StockMovementForm user={user} branch={branch} wasteOnly={wasteOnly} onDone={() => setHistKey(k => k + 1)} />
+          <MovementHistoryPanel branch={branch} kind="koreksi" wasteOnly={wasteOnly} refreshKey={histKey} />
+        </div>
+      );
+    }
+
+    function StockMovementForm({ user, branch, wasteOnly, onDone }) {
       const [ingredients, setIngredients] = useState([]);
       const [loading, setLoading] = useState(true);
       const [loadError, setLoadError] = useState(false);
@@ -6350,6 +6470,7 @@
             setWasteNote('');
             setLeftoverDate('');
             loadData();
+            if (onDone) onDone();
           } else {
             notify.alert("Gagal mencatat: " + res.message, "Gagal", "error");
           }
@@ -6360,7 +6481,7 @@
       };
 
       return (
-        <div className="p-6 h-full overflow-y-auto max-w-xl">
+        <div className="p-6 max-w-xl">
           <div className="mb-6">
             <h2 className="text-2xl font-bold text-gray-800">{wasteOnly ? 'Stok Terbuang' : 'Koreksi Stok & Stok Terbuang'}</h2>
             {wasteOnly && <p className="text-gray-500 text-sm mt-1">Catat barang yang <b>dibuang, rusak, atau tumpah</b> (misal sisa teh yang dibuang). Ukur dulu jumlahnya, lalu isi di sini. Barang yang datang dicatat di tab Barang Masuk.</p>}
