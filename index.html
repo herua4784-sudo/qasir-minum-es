@@ -154,6 +154,19 @@
       });
     }
 
+    // Siapkan laporan "Bulan Ini" di latar belakang begitu Owner/Admin login, supaya saat
+    // Laporan Keuangan dibuka angkanya sudah ada (disimpan dengan kunci yang sama persis).
+    function prefetchFinancialReport(branchParam) {
+      try {
+        const pr = resolvePeriodRange('Bulan Ini');
+        const f = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        const s0 = f(pr.start), e0 = f(pr.end);
+        const [y, m] = s0.split('-');
+        const key = 'plreport:' + JSON.stringify([branchParam, Number(m), Number(y), s0, e0]);
+        runGoogleScript('getProfitLossReport', branchParam, Number(m), Number(y), s0, e0).then(d => { try { offlineCacheSet(key, d); } catch (e) {} }).catch(() => {});
+      } catch (e) {}
+    }
+
     function offlineCacheGet(key) {
       return openOfflineDb().then(db => new Promise((resolve, reject) => {
         const tx = db.transaction(OFFLINE_STORE_NAME, 'readonly');
@@ -2708,6 +2721,7 @@
     }
 
     function AdministratorDashboard({ user, branch, onLogout, settings }) {
+      useEffect(() => { const t = setTimeout(() => prefetchFinancialReport(branch ? branch.ID : 'BR001'), 2500); return () => clearTimeout(t); }, []);
       const [activeTab, setActiveTab] = useState('laporan');
       const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
       const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarPref);
@@ -2865,6 +2879,7 @@
     }
 
     function OwnerDashboard({ user, branch, onChangeBranch, onLogout, settings, onRefreshSettings }) {
+      useEffect(() => { const t = setTimeout(() => prefetchFinancialReport(undefined), 2500); return () => clearTimeout(t); }, []);
       const [activeTab, setActiveTab] = useState('laporan');
       const [laporanOpen, setLaporanOpen] = useState(false);
       const [produkOpen, setProdukOpen] = useState(false);
@@ -8471,7 +8486,7 @@
         }
       }, []);
 
-      const loadPl = () => {
+      const loadPl = (forceFresh) => {
         setLoadingPl(true);
         const [yearStr, monthStr] = rangeStart.split('-');
         const branchParam = viewBranchId === 'ALL' ? undefined : viewBranchId;
@@ -8485,7 +8500,7 @@
             setLoadingPl(false); setLoadingExpenses(false); setPlStale(true);
           }
         }).catch(() => {});
-        runGoogleScript('getProfitLossReport', branchParam, Number(monthStr), Number(yearStr), rangeArgs[0], rangeArgs[1]).then(data => {
+        runGoogleScript('getProfitLossReport', branchParam, Number(monthStr), Number(yearStr), rangeArgs[0], rangeArgs[1], forceFresh === true ? true : undefined).then(data => {
           gotFresh = true;
           setPlData(data);
           setExpenses((data && data.expenseRows) || []);
@@ -8567,7 +8582,7 @@
               <h2 className="text-2xl font-bold text-gray-800">Laporan Keuangan</h2>
               <p className="text-gray-500 text-sm mt-1">Laba Rugi & Nilai Persediaan — dihitung otomatis dari data penjualan, resep, dan gaji.</p>
             </div>
-            <button onClick={() => { loadPl(); if (subTab === 'persediaan') loadInv(); }} disabled={loadingPl || (subTab === 'persediaan' && loadingInv)} className="bg-white border hover:bg-gray-50 text-gray-600 w-9 h-9 rounded-xl flex items-center justify-center transition-colors flex-shrink-0" title="Muat ulang data terbaru">
+            <button onClick={() => { loadPl(true); if (subTab === 'persediaan') loadInv(); }} disabled={loadingPl || (subTab === 'persediaan' && loadingInv)} className="bg-white border hover:bg-gray-50 text-gray-600 w-9 h-9 rounded-xl flex items-center justify-center transition-colors flex-shrink-0" title="Muat ulang data terbaru">
               <i className={`fa-solid fa-arrow-rotate-right ${(loadingPl || plStale || (subTab === 'persediaan' && loadingInv)) ? 'fa-spin' : ''}`}></i>
             </button>
           </div>
@@ -8653,7 +8668,7 @@
                   </div>
                   <p className="text-[11px] text-gray-400 mt-5 pt-4 border-t">
                     <i className="fa-solid fa-circle-info mr-1"></i>
-                    Dari {plData.jumlahTransaksi} transaksi {periodWord}.{plStale && <span style={{ color: '#d97706', fontWeight: 700 }}> · Menampilkan data tersimpan, sedang memperbarui…</span>}
+                    Dari {plData.jumlahTransaksi} transaksi {periodWord}.{plData && plData.generatedAt && !plStale && <span style={{ color: '#9ca3af' }}> · Diperbarui {new Date(plData.generatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>}{plStale && <span style={{ color: '#d97706', fontWeight: 700 }}> · Menampilkan data tersimpan, sedang memperbarui…</span>}
                   </p>
                 </div>
 
