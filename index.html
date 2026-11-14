@@ -3663,7 +3663,7 @@
        const notify = useNotification();
        
        const [modal, setModal] = useState({ isOpen: false, mode: 'add' });
-       const [formData, setFormData] = useState({ Name: '', Username: '', Password: '', Role: 'Kasir', Branch_ID: '' });
+       const [formData, setFormData] = useState({ Name: '', Username: '', Password: '', Role: 'Kasir', Branch_ID: '', PIN: '', Shared: false, _hasPIN: false });
 
        const loadUsers = () => {
          setLoading(true);
@@ -3691,10 +3691,11 @@
              Username: employee.Username || '',
              Password: '',
              Role: employee.Role || 'Kasir',
-             Branch_ID: employee.Branch_ID || (branches.length > 0 ? branches[0].ID : '')
+             Branch_ID: employee.Branch_ID || (branches.length > 0 ? branches[0].ID : ''),
+             PIN: '', Shared: !!employee.Shared, _hasPIN: !!employee.HasPIN
            });
          } else {
-           setFormData({ Name: '', Username: '', Password: '', Role: 'Kasir', Branch_ID: branches.length > 0 ? branches[0].ID : '' });
+           setFormData({ Name: '', Username: '', Password: '', Role: 'Kasir', Branch_ID: branches.length > 0 ? branches[0].ID : '', PIN: '', Shared: false, _hasPIN: false });
          }
          setModal({ isOpen: true, mode });
        };
@@ -3707,7 +3708,13 @@
          btn.disabled = true;
 
          const sanitizedUsername = formData.Username.trim().toLowerCase().replace(/\s+/g, '');
-         const updatedFormData = { ...formData, Username: sanitizedUsername };
+         const pinTrim = String(formData.PIN || '').trim();
+         if (pinTrim !== '' && !/^\d{4,6}$/.test(pinTrim)) {
+           notify.alert('PIN Absen harus 4-6 angka.', 'PIN Tidak Valid', 'error');
+           btn.innerHTML = originalText; btn.disabled = false;
+           return;
+         }
+         const updatedFormData = { ...formData, Username: sanitizedUsername, PIN: pinTrim, Shared: formData.Role === 'Kasir' && !!formData.Shared };
 
          const res = await runGoogleScript('manageEmployee', modal.mode, updatedFormData);
          if (res.success) {
@@ -3786,6 +3793,22 @@
                      </div>
                    )}
 
+                   {formData.Role === 'Kasir' && (
+                     <div className="space-y-3">
+                       <label className="flex items-start gap-2.5 bg-indigo-50 border border-indigo-100 rounded-xl p-3 cursor-pointer">
+                         <input type="checkbox" checked={!!formData.Shared} onChange={e => setFormData({...formData, Shared: e.target.checked})} style={{ marginTop: 3 }} />
+                         <span className="text-xs text-indigo-800 leading-relaxed"><b>Akun bersama outlet</b> — akun yang login di tablet kasir. Pegawai absen memakai PIN pribadi (tanpa ganti akun), dan nama di struk mengikuti pegawai yang sedang bertugas.</span>
+                       </label>
+                       {!formData.Shared && (
+                         <div>
+                           <label className="block text-sm font-semibold text-gray-700 mb-1">PIN Absen {formData._hasPIN && <span className="font-normal text-emerald-600">(sudah dibuat — kosongkan jika tidak diubah)</span>}</label>
+                           <input type="text" inputMode="numeric" maxLength={6} value={formData.PIN} onChange={e => setFormData({...formData, PIN: e.target.value.replace(/\D/g, '')})} className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" placeholder="4-6 angka, misal 4821" />
+                           <p className="text-[10px] text-gray-400 mt-1">Dipakai pegawai untuk absen masuk/pulang di tablet outlet. Pegawai tanpa PIN tidak muncul di layar absen.</p>
+                         </div>
+                       )}
+                     </div>
+                   )}
+
                    {/* DYNAMIC ROLE DESCRIPTION */}
                    <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100 text-xs text-slate-600 leading-relaxed transition-all">
                      {formData.Role === 'Owner' && (
@@ -3852,6 +3875,8 @@
                            }`}>
                              {u.Role}
                            </span>
+                           {u.Shared && <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">Akun Bersama</span>}
+                           {u.Role === 'Kasir' && !u.Shared && <span className={`ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold ${u.HasPIN ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>{u.HasPIN ? 'PIN ✓' : 'Belum ada PIN'}</span>}
                          </td>
                          <td className="p-4 text-gray-500">{u.Role === 'Owner' ? 'Semua Cabang' : getBranchName(u.Branch_ID)}</td>
                          <td className="p-4 text-center">
@@ -3948,10 +3973,20 @@
               runGoogleScript('getSettings'),
               runGoogleScript('getRecentStockMovements', branchId, 300, 'Semua', true)
             ].map(pr => Promise.resolve(pr).catch(() => {})));
+            // Akun bersama outlet: simpan juga daftar pegawai + PIN-nya (hash) di tablet,
+            // supaya absen PIN langsung bisa dipakai offline walau layar Absensi belum pernah dibuka online.
+            let sharedCount = 0;
+            for (const acc of (res.accounts || [])) {
+              if (!acc.shared) continue;
+              try {
+                const d = await runGoogleScript('getOutletStaff', branchId, acc.username);
+                if (d && d.staff) { localStorage.setItem('outletStaff:' + acc.username + ':' + branchId, JSON.stringify(d)); sharedCount++; }
+              } catch (er) {}
+            }
             if (out.added === 0) {
               setMessage({ type: 'warn', text: 'Tidak ada akun pegawai untuk outlet ini.' + (out.removed > 0 ? ' ' + out.removed + ' akun lama dihapus dari tablet ini.' : '') });
             } else {
-              setMessage({ type: 'ok', text: out.added + ' akun pegawai siap login offline di tablet ini (' + out.names.join(', ') + '). Data produk outlet ikut disimpan; foto produk menyusul beberapa saat. Berlaku 30 hari.' + (out.removed > 0 ? ' ' + out.removed + ' akun lama yang sudah tidak terdaftar dihapus dari tablet ini.' : '') });
+              setMessage({ type: 'ok', text: out.added + ' akun pegawai siap login offline di tablet ini (' + out.names.join(', ') + '). Data produk outlet ikut disimpan; foto produk menyusul beberapa saat.' + (sharedCount > 0 ? ' Daftar pegawai & PIN absen akun bersama juga siap dipakai offline.' : '') + ' Berlaku 30 hari.' + (out.removed > 0 ? ' ' + out.removed + ' akun lama yang sudah tidak terdaftar dihapus dari tablet ini.' : '') });
             }
             setPassword('');
           }
@@ -3967,7 +4002,7 @@
           <div className="flex items-start justify-between mb-3 gap-3">
             <div>
               <h3 className="font-bold text-gray-800">Login Offline untuk Pegawai</h3>
-              <p className="text-gray-500 text-xs mt-1 leading-relaxed">Siapkan tablet ini supaya pegawai outlet bisa login walau tidak ada internet, termasuk yang belum pernah login di tablet ini. Lakukan sekali saat tablet online; berlaku 30 hari. Ulangi kalau ada pegawai baru, password diganti, atau pegawai berhenti.</p>
+              <p className="text-gray-500 text-xs mt-1 leading-relaxed">Siapkan tablet ini supaya pegawai outlet bisa login walau tidak ada internet, termasuk yang belum pernah login di tablet ini. Lakukan sekali saat tablet online; berlaku 30 hari. Ulangi kalau ada pegawai baru, password atau PIN absen diganti, atau pegawai berhenti.</p>
             </div>
             <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 bg-indigo-50">
               <i className="fa-solid fa-user-lock text-xl text-indigo-500"></i>
@@ -7479,7 +7514,243 @@
       );
     }
 
+    // Daftar pegawai outlet + siapa yang sedang bertugas. Hanya relevan untuk "akun bersama outlet".
+    function useOutletStaff(user, branch) {
+      const branchId = branch ? branch.ID : 'BR001';
+      const key = 'outletStaff:' + user.username + ':' + branchId;
+      const readLS = () => { try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } };
+      const [data, setData] = useState(() => { const c = readLS(); return c ? { isShared: !!c.isShared, staff: c.staff || [], known: true } : { isShared: false, staff: [], known: false }; });
+      const [pending, setPending] = useState([]);
+      // Absen yang dibuat saat offline & belum terkirim: dipakai untuk menimpa status "bertugas".
+      const reloadPending = () => queueGetAllWrites().then(q => setPending((q || []).filter(it => it.functionName === 'recordAttendance'))).catch(() => {});
+      const refresh = () => { reloadPending(); return refreshServer(); };
+      const refreshServer = () => runGoogleScript('getOutletStaff', branchId, user.username).then(d => {
+        if (d && d.staff) {
+          setData({ isShared: !!d.isShared, staff: d.staff, known: true });
+          try { localStorage.setItem(key, JSON.stringify(d)); } catch (e) {}
+        }
+        return d;
+      }).catch(() => { setData(prev => prev.known ? prev : Object.assign({}, prev, { known: true })); return null; });
+      useEffect(() => {
+        refresh();
+        const h = () => refresh();
+        window.addEventListener('outlet-staff-refresh', h);
+        const t = setInterval(() => { if (document.visibilityState !== 'hidden') refresh(); }, 60000);
+        return () => { window.removeEventListener('outlet-staff-refresh', h); clearInterval(t); };
+      }, [key]);
+      const staff = (data.staff || []).map(sx => {
+        let st = sx;
+        pending.forEach(it => {
+          const a = it.args || [];
+          if (String(a[0]) !== sx.Username) return;
+          if (a[1] === 'Clock In') st = Object.assign({}, st, { OnShift: true, Shift: a[3] || '', Since: '(offline)' });
+          else if (a[1] === 'Clock Out') st = Object.assign({}, st, { OnShift: false });
+        });
+        return st;
+      });
+      return Object.assign({}, data, { staff, refresh, reloadPending });
+    }
+
     function AttendanceView({ user, branch }) {
+      const outlet = useOutletStaff(user, branch);
+      if (!outlet.known) return <div className="p-10 text-center text-gray-400"><i className="fa-solid fa-spinner fa-spin mr-2"></i>Memuat...</div>;
+      if (outlet.isShared) return <PinAttendanceView user={user} branch={branch} outlet={outlet} />;
+      return <PersonalAttendanceView user={user} branch={branch} />;
+    }
+
+    // Absen di akun outlet bersama: pilih nama + PIN pribadi, tanpa ganti akun.
+    function PinAttendanceView({ user, branch, outlet }) {
+      const notify = useNotification();
+      const branchId = branch ? branch.ID : 'BR001';
+      const [sel, setSel] = useState(null);
+      const [pin, setPin] = useState('');
+      const [busy, setBusy] = useState(false);
+      const [err, setErr] = useState('');
+      const [records, setRecords] = useState([]);
+      const [recapUser, setRecapUser] = useState('');
+      const [recap, setRecap] = useState([]);
+      const staff = outlet.staff || [];
+
+      const loadRecords = () => runGoogleScript('getTodayAttendance', '', branchId).then(d => setRecords(d || [])).catch(() => {});
+      useEffect(() => { loadRecords(); }, []);
+      useEffect(() => { if (!recapUser && staff.length) setRecapUser(staff[0].Username); }, [staff.length]);
+      useEffect(() => {
+        if (!recapUser) return;
+        const n = new Date();
+        runGoogleScript('getMyShiftRecap', recapUser, branchId, n.getMonth() + 1, n.getFullYear())
+          .then(d => setRecap((d || []).slice().reverse().slice(0, 7))).catch(() => setRecap([]));
+      }, [recapUser, records.length]);
+
+      const nameOf = (u) => { const s = staff.find(x => x.Username === u); return s ? s.Name : u; };
+      const close = () => { setSel(null); setPin(''); setErr(''); };
+      const afterOk = () => {
+        loadRecords(); outlet.refresh();
+        try { window.dispatchEvent(new Event('outlet-staff-refresh')); } catch (e) {}
+      };
+
+      // Cek PIN di tablet (dipakai saat offline) memakai hash yang tersimpan dari server.
+      const sha256Hex = async (t) => {
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+        return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+      };
+      const verifyLocal = async (staffRow, pinVal) => {
+        const lk = 'pinfail:' + staffRow.Username;
+        let st = {}; try { st = JSON.parse(localStorage.getItem(lk)) || {}; } catch (e) {}
+        if (st.until && Date.now() < st.until) return { ok: false, message: 'PIN salah terlalu sering. Coba lagi dalam beberapa menit.' };
+        if (!staffRow.PinHash) return { ok: false, message: 'Saat offline, PIN belum bisa dicek. Buka layar ini sekali saat online dulu.' };
+        const h = await sha256Hex('pin:' + staffRow.Username + ':' + pinVal);
+        if (h === staffRow.PinHash) { try { localStorage.removeItem(lk); } catch (e) {} return { ok: true }; }
+        const n = (st.n || 0) + 1;
+        try { localStorage.setItem(lk, JSON.stringify(n >= 5 ? { n: 0, until: Date.now() + 600000 } : { n })); } catch (e) {}
+        return { ok: false, message: 'PIN salah.' };
+      };
+
+      const doAbsen = async (type, shift) => {
+        if (pin.length < 4) { setErr('Masukkan PIN 4-6 angka.'); return; }
+        setBusy(true); setErr('');
+        const reqId = newRequestId();
+        try {
+          const res = await runGoogleScript('recordAttendanceByPin', sel.Username, pin, type, branchId, shift || '', reqId);
+          if (res && res.success) {
+            const nm = sel.Name;
+            close(); afterOk();
+            notify.alert(`${nm}: ${type === 'Clock In' ? 'Mulai shift' : 'Selesai shift'} tercatat pukul ${res.timestamp}`, 'Absensi Berhasil', 'success');
+          } else {
+            setErr((res && res.message) || 'Gagal mencatat absensi.'); setPin('');
+          }
+        } catch (e) {
+          // Tidak ada koneksi: cek PIN di tablet, lalu simpan ke antrian (terkirim otomatis saat online).
+          try {
+            const v = await verifyLocal(sel, pin);
+            if (!v.ok) { setErr(v.message); setPin(''); }
+            else if (type === 'Clock In' && sel.OnShift) { setErr(sel.Name + ' sudah absen masuk.'); }
+            else if (type === 'Clock Out' && !sel.OnShift) { setErr(sel.Name + ' belum absen masuk.'); }
+            else {
+              const r2 = await runGoogleScript('recordAttendance', sel.Username, type, branchId, shift || '', reqId);
+              if (r2 && r2.success) {
+                const nm = sel.Name;
+                close(); outlet.reloadPending();
+                try { window.dispatchEvent(new Event('outlet-staff-refresh')); } catch (er) {}
+                notify.alert(`${nm}: ${type === 'Clock In' ? 'Mulai shift' : 'Selesai shift'} tercatat (offline) pukul ${r2.timestamp}. Terkirim otomatis saat internet kembali.`, 'Absensi Tersimpan', 'success');
+              } else setErr('Gagal menyimpan absensi.');
+            }
+          } catch (e2) { setErr('Gagal menyimpan absensi.'); }
+        }
+        setBusy(false);
+      };
+
+      const doUangMakan = async () => {
+        if (pin.length < 4) { setErr('Masukkan PIN 4-6 angka.'); return; }
+        setBusy(true); setErr('');
+        try {
+          const res = await runGoogleScript('addUangMakanByPin', sel.Username, pin, new Date().toLocaleDateString('id-ID'), branchId);
+          if (res && res.success) { const nm = sel.Name; close(); notify.alert(`Uang Makan hari ini untuk ${nm} tercatat.`, 'Berhasil', 'success'); }
+          else if (res && res.alreadyExists) { setErr('Uang Makan hari ini sudah pernah dicatat.'); }
+          else { setErr((res && res.message) || 'Gagal mencatat.'); setPin(''); }
+        } catch (e) { setErr('Uang Makan butuh koneksi internet. Coba lagi saat online.'); }
+        setBusy(false);
+      };
+
+      const badge = (type) => {
+        const cfg = type === 'Clock In' ? { l: 'Mulai Shift', c: 'bg-emerald-100 text-emerald-700' } : type === 'Clock Out' ? { l: 'Selesai Shift', c: 'bg-rose-100 text-rose-700' } : { l: type, c: 'bg-gray-100 text-gray-700' };
+        return <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${cfg.c}`}>{cfg.l}</span>;
+      };
+      const stCls = (st) => String(st).indexOf('Absen tepat waktu') === 0 ? { color: '#059669' } : (st === 'Belum Clock Out' ? { color: '#9ca3af' } : { color: '#e11d48', fontWeight: 700 });
+
+      return (
+        <div className="p-6 flex flex-col items-center h-full overflow-y-auto">
+          {sel && (
+            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs overflow-hidden">
+                <div className="p-5 text-center border-b">
+                  <div className="w-14 h-14 mx-auto rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xl font-bold mb-2">{String(sel.Name || '?').charAt(0).toUpperCase()}</div>
+                  <h3 className="font-bold text-lg text-gray-800">{sel.Name}</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">{sel.OnShift ? `Sedang bertugas${sel.Shift ? ' · ' + sel.Shift : ''}` : 'Belum absen masuk'}</p>
+                </div>
+                <div className="p-5 space-y-3">
+                  <input type="password" inputMode="numeric" autoFocus maxLength={6} value={pin} onChange={e => { setPin(e.target.value.replace(/\D/g, '')); setErr(''); }} placeholder="PIN Anda" className="w-full text-center text-2xl tracking-widest font-mono px-3 py-3 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                  {err && <p className="text-xs font-bold text-center" style={{ color: '#e11d48' }}>{err}</p>}
+                  {!sel.OnShift ? (
+                    <div className="space-y-2">
+                      <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock In', 'SHIFT 1')} className="w-full bg-emerald-500 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-left px-4">Mulai Shift 1 <span className="text-xs font-normal opacity-80 ml-1">08:00 - 16:00</span></button>
+                      <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock In', 'SHIFT 2')} className="w-full bg-emerald-500 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-left px-4">Mulai Shift 2 <span className="text-xs font-normal opacity-80 ml-1">15:00 - 22:00</span></button>
+                      <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock In', 'SHIFT 1, SHIFT 2')} className="w-full bg-emerald-600 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-left px-4">Shift 1 & 2 <span className="text-xs font-normal opacity-80 ml-1">kerja penuh</span></button>
+                    </div>
+                  ) : (
+                    <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock Out')} className="w-full bg-rose-500 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl"><i className="fa-solid fa-right-from-bracket mr-2"></i>Selesai Shift</button>
+                  )}
+                  <button disabled={busy || pin.length < 4} onClick={doUangMakan} className="w-full bg-amber-50 disabled:opacity-50 text-amber-700 font-bold py-2 rounded-xl text-xs"><i className="fa-solid fa-utensils mr-1.5"></i>Catat Uang Makan hari ini</button>
+                  <button onClick={close} className="w-full text-gray-500 font-bold py-1.5 text-sm">Batal</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-150 max-w-md w-full relative overflow-hidden flex-shrink-0">
+            <div className="absolute top-0 left-0 right-0 h-2 bg-indigo-600"></div>
+            <div className="text-center mb-4 mt-1">
+              <i className="fa-regular fa-clock text-4xl text-indigo-500 mb-2"></i>
+              <h2 className="text-xl font-bold text-gray-800">Absen Pegawai</h2>
+              <p className="text-gray-500 text-sm">Pilih nama Anda, lalu masukkan PIN pribadi.</p>
+            </div>
+            {staff.length === 0 ? (
+              <p className="text-center text-gray-400 text-sm py-4">Belum ada pegawai dengan PIN Absen di outlet ini. Minta Owner membuat PIN di Daftar Pegawai.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {staff.map(s => (
+                  <button key={s.Username} onClick={() => { setSel(s); setPin(''); setErr(''); }} className="rounded-2xl border p-3 text-left bg-slate-50 hover:bg-indigo-50" style={s.OnShift ? { borderColor: '#10b981', background: '#ecfdf5' } : {}}>
+                    <p className="font-bold text-gray-800 text-sm truncate">{s.Name}</p>
+                    <p className="text-[11px] mt-0.5" style={{ color: s.OnShift ? '#059669' : '#9ca3af', fontWeight: s.OnShift ? 700 : 400 }}>{s.OnShift ? '● Bertugas' + (s.Shift ? ' · ' + s.Shift : '') : 'Belum masuk'}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-150 max-w-md w-full mt-6 flex-shrink-0">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-gray-800">Absensi Hari Ini</h3>
+              <button onClick={() => { loadRecords(); outlet.refresh(); }} className="text-gray-400 w-8 h-8" title="Muat ulang"><i className="fa-solid fa-arrow-rotate-right"></i></button>
+            </div>
+            {records.length === 0 ? <p className="text-center text-gray-400 text-sm py-3">Belum ada absensi hari ini.</p> : (
+              <div className="space-y-2">
+                {records.map((r, i) => (
+                  <div key={i} className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2.5">
+                    <div className="flex items-center gap-2"><span className="text-sm font-bold text-gray-700">{nameOf(r.Username)}</span>{badge(r.Type)}</div>
+                    <span className="text-xs text-gray-500 font-semibold">{r.Timestamp}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-150 max-w-md w-full mt-6 mb-6 flex-shrink-0">
+            <h3 className="font-bold text-gray-800 mb-1">Keterangan Absensi</h3>
+            <p className="text-[11px] text-gray-400 mb-3">Jadwal: Shift 1 jam 08.00-16.00 · Shift 2 jam 15.00-22.00</p>
+            {staff.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {staff.map(s => (
+                  <button key={s.Username} onClick={() => setRecapUser(s.Username)} className="px-3 py-1.5 rounded-full text-xs font-bold border" style={recapUser === s.Username ? { background: '#4f46e5', color: '#fff', borderColor: '#4f46e5' } : { background: '#f8fafc', color: '#475569' }}>{s.Name}</button>
+                ))}
+              </div>
+            )}
+            {recap.length === 0 ? <p className="text-center text-gray-400 text-sm py-3">Belum ada data absensi bulan ini.</p> : (
+              <div className="space-y-2">
+                {recap.map((r, i) => (
+                  <div key={i} className="bg-slate-50 rounded-xl px-3 py-2.5">
+                    <div className="flex justify-between text-xs font-bold text-gray-700"><span>{r.Date}</span><span>{r.Keterangan}</span></div>
+                    <p className="text-xs mt-1" style={stCls(r.StatusMasuk)}><i className="fa-solid fa-right-to-bracket mr-1"></i>Masuk {r.JamMasuk} — {r.StatusMasuk}</p>
+                    <p className="text-xs mt-0.5" style={stCls(r.StatusPulang)}><i className="fa-solid fa-right-from-bracket mr-1"></i>Pulang {r.JamPulang} — {r.StatusPulang}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function PersonalAttendanceView({ user, branch }) {
       const [loading, setLoading] = useState(false);
       const [myRecords, setMyRecords] = useState([]);
       const [loadingRecords, setLoadingRecords] = useState(true);
@@ -9625,6 +9896,11 @@
     const CART_STORAGE_KEY = 'qasir_minumes_active_cart';
 
     function POSView({ user, branch, settings }) {
+      const outlet = useOutletStaff(user, branch);
+      const [pickedCashier, setPickedCashier] = useState(() => { try { return localStorage.getItem('pickedCashier') || ''; } catch (e) { return ''; } });
+      const onShiftStaff = outlet.isShared ? (outlet.staff || []).filter(x => x.OnShift) : [];
+      const activeStaff = onShiftStaff.find(x => x.Username === pickedCashier) || onShiftStaff[0] || null;
+      const cashierName = outlet.isShared ? (activeStaff ? activeStaff.Name : user.name) : user.name;
       const [products, setProducts] = useState([]);
       const isManagerRole = !!user && (user.role === 'Owner' || user.role === 'Administrator' || user.role === 'Rekan Bisnis');
       const favKey = favoriteKeyFor(branch ? branch.ID : 'BR001');
@@ -9869,7 +10145,7 @@
         try {
           const finalCashReceived = paymentMethod === 'Tunai' ? cashReceivedNum : total;
           const finalChange = paymentMethod === 'Tunai' ? change : 0;
-          const res = await runGoogleScript('saveTransaction', user.name, subtotal, 0, total, cart, paymentMethod, finalCashReceived, finalChange, branch ? branch.ID : 'BR001');
+          const res = await runGoogleScript('saveTransaction', cashierName, subtotal, 0, total, cart, paymentMethod, finalCashReceived, finalChange, branch ? branch.ID : 'BR001');
           if (res.success) {
             // Simpan detail transaksi untuk dipakai tombol Cetak Struk/Kirim Struk/Cetak
             // Pesanan di layar sukses, TANPA langsung mencetak sekarang — supaya kasir
@@ -9878,7 +10154,7 @@
             const newTrx = {
               id: res.trxId,
               date: res.date,
-              cashier: user.name,
+              cashier: cashierName,
               paymentMethod,
               items: cart,
               total,
@@ -9939,8 +10215,14 @@
                   <i className="fa-solid fa-user text-xs"></i>
                 </div>
                 <div className="leading-tight">
-                  <p className="text-xs font-bold text-gray-800 truncate max-w-[100px]">{user.name}</p>
-                  <p className="text-[10px] text-gray-400">{user.role}</p>
+                  {outlet.isShared && onShiftStaff.length > 1 ? (
+                    <select value={activeStaff ? activeStaff.Username : ''} onChange={e => { setPickedCashier(e.target.value); try { localStorage.setItem('pickedCashier', e.target.value); } catch (er) {} }} className="text-xs font-bold text-gray-800 bg-transparent outline-none max-w-[120px]">
+                      {onShiftStaff.map(x => <option key={x.Username} value={x.Username}>{x.Name}</option>)}
+                    </select>
+                  ) : (
+                    <p className="text-xs font-bold text-gray-800 truncate max-w-[100px]">{cashierName}</p>
+                  )}
+                  <p className="text-[10px]" style={outlet.isShared && !activeStaff ? { color: '#d97706', fontWeight: 700 } : { color: '#9ca3af' }}>{outlet.isShared ? (activeStaff ? 'Kasir bertugas' : 'Belum ada yang absen') : user.role}</p>
                 </div>
               </div>
 
