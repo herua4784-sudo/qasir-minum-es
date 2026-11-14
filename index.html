@@ -2788,7 +2788,7 @@
 
       const laporanTabs = ['keuangan', 'penjualan'];
       const produkTabs = ['produk-katalog', 'produk-resep', 'kategori'];
-      const inventoryTabs = ['inventory-ringkasan', 'inventory-riwayat', 'inventory-laporan'];
+      const inventoryTabs = ['inventory-ringkasan', 'inventory-riwayat', 'inventory-produksi', 'inventory-koreksi', 'inventory-laporan'];
       const pegawaiTabs = ['absensi', 'rekap-shift'];
 
       return (
@@ -2861,6 +2861,8 @@
                     <div className="ml-4 space-y-1 mt-1">
                       <MenuBtn icon="fa-clipboard-list" label="Ringkasan Stok" active={activeTab === 'inventory-ringkasan'} onClick={() => goTo('inventory-ringkasan')} dark small />
                       <MenuBtn icon="fa-clock-rotate-left" label="Riwayat Pergerakan" active={activeTab === 'inventory-riwayat'} onClick={() => goTo('inventory-riwayat')} dark small />
+                      <MenuBtn icon="fa-fire-burner" label="Riwayat Produksi Batch (Racikan)" active={activeTab === 'inventory-produksi'} onClick={() => goTo('inventory-produksi')} dark small />
+                      <MenuBtn icon="fa-trash-can-arrow-up" label="Riwayat Koreksi Stok & Stok Terbuang" active={activeTab === 'inventory-koreksi'} onClick={() => goTo('inventory-koreksi')} dark small />
                       <MenuBtn icon="fa-sack-dollar" label="Laporan Pemakaian Bahan Baku" active={activeTab === 'inventory-laporan'} onClick={() => goTo('inventory-laporan')} dark small />
                     </div>
                   )}
@@ -2912,6 +2914,8 @@
               {keepAlive('produk-resep', <BahanBakuResepView branch={branch} readOnly={true} />)}
               {keepAlive('inventory-ringkasan', <InventoryOverviewView branch={branch} />)}
               {keepAlive('inventory-riwayat', <StockHistoryView branch={branch} />)}
+              {keepAlive('inventory-produksi', <ReadOnlyMovementHistoryView branch={branch} kind="batch" title="Riwayat Produksi Batch (Racikan)" />)}
+              {keepAlive('inventory-koreksi', <ReadOnlyMovementHistoryView branch={branch} kind="koreksi" title="Riwayat Koreksi Stok & Stok Terbuang" />)}
               {keepAlive('inventory-laporan', <MaterialUsageReportView branch={branch} allowBranchFilter={false} />)}
               {keepAlive('absensi', <AttendanceHistoryView branch={branch} allowBranchFilter={false} settings={settings} readOnly={true} />)}
               {keepAlive('rekap-shift', <ShiftRecapView branch={branch} allowBranchFilter={false} settings={settings} readOnly={true} />)}
@@ -5498,6 +5502,20 @@
             : total === 0 ? <p className="text-center text-gray-400 text-sm py-6 bg-white border rounded-xl">Belum ada riwayat.</p>
             : <div className="space-y-2">{body}</div>}
           {total > visible && <button type="button" onClick={() => setVisible(visible + 15)} className="w-full mt-3 py-2 text-sm font-bold text-indigo-600 bg-indigo-50 rounded-lg">Tampilkan lebih banyak ({total - visible} lagi)</button>}
+        </div>
+      );
+    }
+
+    // Khusus lihat (Rekan Bisnis): hanya riwayat, tanpa formulir input. Memakai panel & simpanan
+    // yang sama dengan Owner (tampil dulu dari simpanan, diperbarui di belakang).
+    function ReadOnlyMovementHistoryView({ branch, kind, title }) {
+      return (
+        <div className="h-full overflow-y-auto">
+          <div className="px-4 sm:px-6 pt-5">
+            <h2 className="text-lg font-bold text-gray-800">{title}</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Hanya melihat riwayat. Pencatatan dilakukan oleh Owner / pegawai outlet.</p>
+          </div>
+          <MovementHistoryPanel branch={branch} kind={kind} refreshKey={0} />
         </div>
       );
     }
