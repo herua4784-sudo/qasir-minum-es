@@ -7674,7 +7674,6 @@
                     <div className="space-y-2">
                       <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock In', 'SHIFT 1')} className="w-full bg-emerald-500 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-left px-4">Mulai Shift 1 <span className="text-xs font-normal opacity-80 ml-1">08:00 - 16:00</span></button>
                       <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock In', 'SHIFT 2')} className="w-full bg-emerald-500 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-left px-4">Mulai Shift 2 <span className="text-xs font-normal opacity-80 ml-1">15:00 - 22:00</span></button>
-                      <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock In', 'SHIFT 1, SHIFT 2')} className="w-full bg-emerald-600 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-left px-4">Shift 1 & 2 <span className="text-xs font-normal opacity-80 ml-1">kerja penuh</span></button>
                     </div>
                   ) : (
                     <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock Out')} className="w-full bg-rose-500 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl"><i className="fa-solid fa-right-from-bracket mr-2"></i>Selesai Shift</button>
@@ -7855,7 +7854,7 @@
                 <div className="p-6 text-center border-b">
                   <i className="fa-solid fa-right-to-bracket text-3xl text-emerald-500 mb-2"></i>
                   <h3 className="font-bold text-xl text-gray-800">Pilih Shift Anda</h3>
-                  <p className="text-gray-500 text-sm mt-1">Shift hari ini yang akan Anda kerjakan.</p>
+                  <p className="text-gray-500 text-sm mt-1">Pilih shift yang Anda kerjakan sekarang.</p>
                 </div>
                 <div className="p-5 space-y-2.5">
                   <button onClick={() => handlePilihShift('SHIFT 1')} disabled={loading} className="w-full bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border text-gray-700 font-bold py-3.5 rounded-xl transition-colors text-left px-4">
@@ -7865,10 +7864,6 @@
                   <button onClick={() => handlePilihShift('SHIFT 2')} disabled={loading} className="w-full bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border text-gray-700 font-bold py-3.5 rounded-xl transition-colors text-left px-4">
                     <span className="block">Shift 2</span>
                     <span className="text-xs text-gray-400 font-normal">15:00 - 22:00</span>
-                  </button>
-                  <button onClick={() => handlePilihShift('SHIFT 1, SHIFT 2')} disabled={loading} className="w-full bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border text-gray-700 font-bold py-3.5 rounded-xl transition-colors text-left px-4">
-                    <span className="block">Shift 1 & 2</span>
-                    <span className="text-xs text-gray-400 font-normal">08:00 - 22:00 (Kerja Penuh)</span>
                   </button>
                   <button onClick={() => setShiftModalOpen(false)} className="w-full text-gray-500 font-bold py-2 text-sm mt-1">Batal</button>
                 </div>
