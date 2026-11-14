@@ -10641,6 +10641,71 @@
       );
     }
 
+    // ==========================================
+    // TOMBOL KEMBALI (Android/browser): kalau ada jendela/popup yang sedang terbuka,
+    // tombol kembali hanya MENUTUP jendela itu — tidak keluar dari aplikasi.
+    // Cara kerja: tiap jendela terbuka dicatat satu entri riwayat; saat tombol kembali
+    // ditekan, jendela paling atas ditutup lewat tombol tutupnya (Batal/Tutup/X/dst).
+    // ==========================================
+    function installBackButtonGuard() {
+      if (window.__backGuardInstalled) return;
+      window.__backGuardInstalled = true;
+      let pushed = 0;
+      let ignoring = false, ignoreTimer = null;
+      const CLOSE_TEXT = /^(Batal|Tutup|Kembali|Tidak|Nanti|Nanti Saja|Oke|OK|Mengerti|Transaksi Baru)$/i;
+
+      const getOverlays = () => Array.prototype.filter.call(document.querySelectorAll('div.fixed'), el => {
+        if (!el.classList.contains('inset-0')) return false;
+        try { if (window.getComputedStyle(el).display === 'none') return false; } catch (e) {}
+        return true;
+      });
+
+      const closeTop = () => {
+        const list = getOverlays();
+        const top = list[list.length - 1];
+        if (!top) return;
+        const btns = Array.prototype.slice.call(top.querySelectorAll('button'));
+        let target = btns.find(b => CLOSE_TEXT.test((b.textContent || '').trim()));
+        if (!target) target = btns.find(b => b.querySelector('.fa-xmark, .fa-times, .fa-chevron-left, .fa-arrow-left'));
+        if (target) { target.click(); return; }
+        top.click(); // terakhir: anggap klik di latar belakang (menutup menu samping, dll.)
+      };
+
+      const sync = () => {
+        const n = getOverlays().length;
+        if (n > pushed) {
+          for (let i = pushed; i < n; i++) { try { window.history.pushState({ overlay: true }, ''); } catch (e) {} }
+          pushed = n;
+        } else if (n < pushed) {
+          const extra = pushed - n;
+          pushed = n;
+          // Jendela ditutup lewat tombol di layar: buang entri riwayatnya tanpa memicu penutupan lagi.
+          ignoring = true;
+          clearTimeout(ignoreTimer);
+          ignoreTimer = setTimeout(() => { ignoring = false; }, 800);
+          try { window.history.go(-extra); } catch (e) { ignoring = false; }
+        }
+      };
+
+      let scheduled = false;
+      const schedule = () => {
+        if (scheduled) return;
+        scheduled = true;
+        (window.requestAnimationFrame || setTimeout)(() => { scheduled = false; sync(); });
+      };
+      new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+
+      window.addEventListener('popstate', () => {
+        if (ignoring) { ignoring = false; clearTimeout(ignoreTimer); return; }
+        if (pushed > 0) {
+          pushed -= 1;
+          closeTop();
+          setTimeout(sync, 80); // kalau jendela tidak bisa ditutup, pasang lagi supaya tidak keluar aplikasi
+        }
+      });
+    }
+    installBackButtonGuard();
+
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
