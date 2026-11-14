@@ -184,6 +184,18 @@
       } catch (e) {}
     }
 
+    // Kunci simpanan layar absen (ikut tanggal/bulan supaya data kemarin tidak tampil sebagai hari ini).
+    const attDayKey = () => { const n = new Date(); return n.getFullYear() + '-' + (n.getMonth() + 1) + '-' + n.getDate(); };
+    const attMonthKey = () => { const n = new Date(); return n.getFullYear() + '-' + (n.getMonth() + 1); };
+    const fetchOutletRecap = (branchId) => { const n = new Date(); return runGoogleScript('getOutletShiftRecap', branchId, n.getMonth() + 1, n.getFullYear()); };
+    // Siapkan data layar absen akun bersama di latar belakang (absensi hari ini + keterangan bulan ini).
+    function prefetchPinAttendance(branchId) {
+      try {
+        runGoogleScript('getTodayAttendance', '', branchId).then(d => { try { offlineCacheSet('swr:attall:' + branchId + ':' + attDayKey(), d || []); } catch (e) {} }).catch(() => {});
+        fetchOutletRecap(branchId).then(d => { try { offlineCacheSet('swr:attrecap:' + branchId + ':' + attMonthKey(), d || []); } catch (e) {} }).catch(() => {});
+      } catch (e) {}
+    }
+
     // Siapkan laporan "Hari Ini" di latar belakang begitu Owner/Admin login, supaya saat
     // Laporan Keuangan dibuka angkanya sudah ada (disimpan dengan kunci yang sama persis).
     function prefetchFinancialReport(branchParam) {
@@ -7527,6 +7539,7 @@
       const refreshServer = () => runGoogleScript('getOutletStaff', branchId, user.username).then(d => {
         if (d && d.staff) {
           setData({ isShared: !!d.isShared, staff: d.staff, known: true });
+          if (d.isShared && !window.__pinAttPrefetched) { window.__pinAttPrefetched = true; prefetchPinAttendance(branchId); }
           try { localStorage.setItem(key, JSON.stringify(d)); } catch (e) {}
         }
         return d;
@@ -7568,23 +7581,20 @@
       const [err, setErr] = useState('');
       const [records, setRecords] = useState([]);
       const [recapUser, setRecapUser] = useState('');
-      const [recap, setRecap] = useState([]);
+      const [allRecap, setAllRecap] = useState([]);
       const staff = outlet.staff || [];
 
-      const loadRecords = () => runGoogleScript('getTodayAttendance', '', branchId).then(d => setRecords(d || [])).catch(() => {});
-      useEffect(() => { loadRecords(); }, []);
+      // Tampil dulu dari simpanan di tablet, diperbarui di belakang (seperti Laporan Keuangan).
+      const loadRecords = (skipCache) => swrFetch('attall:' + branchId + ':' + attDayKey(), () => runGoogleScript('getTodayAttendance', '', branchId), (d) => setRecords(d || []), null, skipCache);
+      const loadRecap = (skipCache) => swrFetch('attrecap:' + branchId + ':' + attMonthKey(), () => fetchOutletRecap(branchId), (d) => setAllRecap(d || []), null, skipCache);
+      useEffect(() => { loadRecords(); loadRecap(); }, []);
       useEffect(() => { if (!recapUser && staff.length) setRecapUser(staff[0].Username); }, [staff.length]);
-      useEffect(() => {
-        if (!recapUser) return;
-        const n = new Date();
-        runGoogleScript('getMyShiftRecap', recapUser, branchId, n.getMonth() + 1, n.getFullYear())
-          .then(d => setRecap((d || []).slice().reverse().slice(0, 7))).catch(() => setRecap([]));
-      }, [recapUser, records.length]);
+      const recap = allRecap.filter(r => String(r.Username || '').toLowerCase().trim() === String(recapUser).toLowerCase().trim()).slice().reverse().slice(0, 7);
 
       const nameOf = (u) => { const s = staff.find(x => x.Username === u); return s ? s.Name : u; };
       const close = () => { setSel(null); setPin(''); setErr(''); };
       const afterOk = () => {
-        loadRecords(); outlet.refresh();
+        loadRecords(true); loadRecap(true); outlet.refresh();
         try { window.dispatchEvent(new Event('outlet-staff-refresh')); } catch (e) {}
       };
 
@@ -7674,6 +7684,7 @@
                     <div className="space-y-2">
                       <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock In', 'SHIFT 1')} className="w-full bg-emerald-500 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-left px-4">Mulai Shift 1 <span className="text-xs font-normal opacity-80 ml-1">08:00 - 16:00</span></button>
                       <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock In', 'SHIFT 2')} className="w-full bg-emerald-500 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-left px-4">Mulai Shift 2 <span className="text-xs font-normal opacity-80 ml-1">15:00 - 22:00</span></button>
+                      <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock In', 'SHIFT 1, SHIFT 2')} className="w-full bg-emerald-600 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-left px-4">Shift 1 & 2 <span className="text-xs font-normal opacity-80 ml-1">kerja penuh</span></button>
                     </div>
                   ) : (
                     <button disabled={busy || pin.length < 4} onClick={() => doAbsen('Clock Out')} className="w-full bg-rose-500 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl"><i className="fa-solid fa-right-from-bracket mr-2"></i>Selesai Shift</button>
@@ -7709,7 +7720,7 @@
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-150 max-w-md w-full mt-6 flex-shrink-0">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold text-gray-800">Absensi Hari Ini</h3>
-              <button onClick={() => { loadRecords(); outlet.refresh(); }} className="text-gray-400 w-8 h-8" title="Muat ulang"><i className="fa-solid fa-arrow-rotate-right"></i></button>
+              <button onClick={() => { loadRecords(true); loadRecap(true); outlet.refresh(); }} className="text-gray-400 w-8 h-8" title="Muat ulang"><i className="fa-solid fa-arrow-rotate-right"></i></button>
             </div>
             {records.length === 0 ? <p className="text-center text-gray-400 text-sm py-3">Belum ada absensi hari ini.</p> : (
               <div className="space-y-2">
@@ -7760,19 +7771,19 @@
       const notify = useNotification();
       const branchId = branch ? branch.ID : 'BR001';
 
-      const loadMyRecords = () => {
+      const loadMyRecords = (skipCache) => {
         setLoadingRecords(true);
-        runGoogleScript('getTodayAttendance', user.username, branchId).then(data => {
+        swrFetch('attme:' + user.username + ':' + branchId + ':' + attDayKey(), () => runGoogleScript('getTodayAttendance', user.username, branchId), (data) => {
           setMyRecords(data || []);
           setLoadingRecords(false);
-        }).catch(() => setLoadingRecords(false));
+        }, () => setLoadingRecords(false), skipCache);
       };
 
       const [myRecap, setMyRecap] = useState([]);
-      const loadMyRecap = () => {
+      const loadMyRecap = (skipCache) => {
         const n = new Date();
-        runGoogleScript('getMyShiftRecap', user.username, branchId, n.getMonth() + 1, n.getFullYear())
-          .then(d => setMyRecap((d || []).slice().reverse().slice(0, 7))).catch(() => {});
+        swrFetch('attmyrecap:' + user.username + ':' + branchId + ':' + attMonthKey(), () => runGoogleScript('getMyShiftRecap', user.username, branchId, n.getMonth() + 1, n.getFullYear()),
+          (d) => setMyRecap((d || []).slice().reverse().slice(0, 7)), null, skipCache);
       };
 
       const loadUmStatus = () => {
@@ -7791,8 +7802,8 @@
           const res = await runGoogleScript('recordAttendance', user.username, type, branchId, shift);
           if(res.success) {
             notify.alert(`Berhasil melakukan ${type} pada pukul ${res.timestamp}`, "Absensi Berhasil", "success");
-            loadMyRecords(); // langsung muncul di riwayat, kasir bisa cek langsung
-            loadMyRecap();
+            loadMyRecords(true); // langsung muncul di riwayat, kasir bisa cek langsung
+            loadMyRecap(true);
           } else {
             notify.alert("Gagal mencatat absensi.", "Error", "error");
           }
@@ -7854,7 +7865,7 @@
                 <div className="p-6 text-center border-b">
                   <i className="fa-solid fa-right-to-bracket text-3xl text-emerald-500 mb-2"></i>
                   <h3 className="font-bold text-xl text-gray-800">Pilih Shift Anda</h3>
-                  <p className="text-gray-500 text-sm mt-1">Pilih shift yang Anda kerjakan sekarang.</p>
+                  <p className="text-gray-500 text-sm mt-1">Shift yang akan Anda kerjakan hari ini.</p>
                 </div>
                 <div className="p-5 space-y-2.5">
                   <button onClick={() => handlePilihShift('SHIFT 1')} disabled={loading} className="w-full bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border text-gray-700 font-bold py-3.5 rounded-xl transition-colors text-left px-4">
@@ -7864,6 +7875,10 @@
                   <button onClick={() => handlePilihShift('SHIFT 2')} disabled={loading} className="w-full bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border text-gray-700 font-bold py-3.5 rounded-xl transition-colors text-left px-4">
                     <span className="block">Shift 2</span>
                     <span className="text-xs text-gray-400 font-normal">15:00 - 22:00</span>
+                  </button>
+                  <button onClick={() => handlePilihShift('SHIFT 1, SHIFT 2')} disabled={loading} className="w-full bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border text-gray-700 font-bold py-3.5 rounded-xl transition-colors text-left px-4">
+                    <span className="block">Shift 1 & 2</span>
+                    <span className="text-xs text-gray-400 font-normal">08:00 - 22:00 (Kerja Penuh)</span>
                   </button>
                   <button onClick={() => setShiftModalOpen(false)} className="w-full text-gray-500 font-bold py-2 text-sm mt-1">Batal</button>
                 </div>
@@ -7912,7 +7927,7 @@
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-150 max-w-sm w-full mt-6 mb-6 flex-shrink-0">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-gray-800">Absensi Saya Hari Ini</h3>
-              <button onClick={loadMyRecords} disabled={loadingRecords} className="text-gray-400 hover:text-gray-600 w-8 h-8 flex items-center justify-center" title="Muat ulang">
+              <button onClick={() => loadMyRecords(true)} disabled={loadingRecords} className="text-gray-400 hover:text-gray-600 w-8 h-8 flex items-center justify-center" title="Muat ulang">
                 <i className={`fa-solid fa-arrow-rotate-right ${loadingRecords ? 'fa-spin' : ''}`}></i>
               </button>
             </div>
