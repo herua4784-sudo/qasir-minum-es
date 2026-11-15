@@ -5614,6 +5614,7 @@
     }
 
     function ProduceBatchForm({ user, branch, onDone }) {
+      const eff = useEffectiveStaff(user, branch);
       const [ingredients, setIngredients] = useState([]);
       const [productionRecipes, setProductionRecipes] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -5670,7 +5671,7 @@
         const confirmAndSubmit = async () => {
           setSubmitting(true);
           try {
-            const res = await runGoogleScript('produceBatch', outputId, batchNum, user && user.name ? user.name : 'Owner', branchId);
+            const res = await runGoogleScript('produceBatch', outputId, batchNum, eff.name || 'Owner', branchId);
             if (res.success) {
               invalidateCache('ingredients_' + branchId);
               notify.alert(`Produksi berhasil! Stok "${selectedOutput.Name}" sekarang: ${Number(res.newStock).toLocaleString('id-ID', { maximumFractionDigits: 2 })} ${res.unit}`, "Berhasil Diproduksi", "success");
@@ -6047,6 +6048,7 @@
       ];
       return (
         <div className="h-full flex flex-col">
+          <div className="flex-shrink-0"><RecorderTag user={user} branch={branch} /></div>
           <div className="px-4 sm:px-6 pt-4 flex-shrink-0">
             <div className="bg-white rounded-xl shadow-sm border p-1 flex gap-1 overflow-x-auto max-w-full w-fit">
               {tabs.map(t => (
@@ -6403,6 +6405,7 @@
     // luar gudang" baru boleh isi harga khusus untuk transaksi ini saja.
     // ==========================================
     function BarangMasukView({ user, branch }) {
+      const eff = useEffectiveStaff(user, branch);
       const [ingredients, setIngredients] = useState([]);
       const [loading, setLoading] = useState(true);
       const [loadError, setLoadError] = useState(false);
@@ -6458,7 +6461,7 @@
             !customPriceMode ? 'Ambil dari Gudang'
               : (buySource === 'gudang' ? 'Ambil dari Gudang (harga berubah)'
                 : 'Beli di luar gudang' + (storeName.trim() ? ' · ' + storeName.trim().replace(/\[|\]/g, '').slice(0, 60) : '')),
-            user && user.name ? user.name : 'Kasir',
+            eff.name || 'Kasir',
             hasPurchaseUnit ? 'purchase' : 'base',
             branchId,
             customPriceMode ? Number(customPrice) : ''
@@ -6571,6 +6574,7 @@
     }
 
     function StockMovementForm({ user, branch, wasteOnly, onDone }) {
+      const eff = useEffectiveStaff(user, branch);
       const [ingredients, setIngredients] = useState([]);
       const [loading, setLoading] = useState(true);
       const [loadError, setLoadError] = useState(false);
@@ -6630,7 +6634,7 @@
             type,
             Number(qty),
             (reasonFinal || (type === 'Masuk' ? 'Pembelian Stok' : 'Penyesuaian Manual')) + (showLeftoverDate && leftoverDate ? ' [sisa ' + leftoverDate + ']' : ''),
-            user && user.name ? user.name : 'Owner',
+            eff.name || 'Owner',
             unitType,
             branchId
           );
@@ -7663,6 +7667,45 @@
         return st;
       });
       return Object.assign({}, data, { staff, refresh, reloadPending });
+    }
+
+    // Nama pencatat yang dipakai di struk, Produksi Batch, Koreksi/Stok Terbuang, dst.
+    // Akun biasa: nama akunnya. Akun outlet bersama: pegawai yang sedang bertugas (hasil absen PIN);
+    // kalau lebih dari satu yang bertugas, pakai yang dipilih; kalau belum ada yang absen: nama akun.
+    function useEffectiveStaff(user, branch) {
+      const outlet = useOutletStaff(user, branch);
+      const readPicked = () => { try { return localStorage.getItem('pickedCashier') || ''; } catch (e) { return ''; } };
+      const [picked, setPickedState] = useState(readPicked);
+      useEffect(() => {
+        const h = () => setPickedState(readPicked());
+        window.addEventListener('picked-cashier-change', h);
+        return () => window.removeEventListener('picked-cashier-change', h);
+      }, []);
+      const setPicked = (u) => {
+        try { localStorage.setItem('pickedCashier', u); } catch (e) {}
+        setPickedState(u);
+        try { window.dispatchEvent(new Event('picked-cashier-change')); } catch (e) {}
+      };
+      const onShift = outlet.isShared ? (outlet.staff || []).filter(x => x.OnShift) : [];
+      const active = onShift.find(x => x.Username === picked) || onShift[0] || null;
+      const name = outlet.isShared ? (active ? active.Name : user.name) : user.name;
+      return { name, active, onShift, isShared: outlet.isShared, setPicked };
+    }
+
+    // Penanda "Dicatat atas nama" di menu input untuk akun outlet bersama.
+    function RecorderTag({ user, branch }) {
+      const eff = useEffectiveStaff(user, branch);
+      if (!eff.isShared) return null;
+      return (
+        <div className="mx-4 sm:mx-6 mt-3 flex items-center gap-2 text-xs rounded-xl px-3 py-2" style={eff.active ? { background: '#eef2ff', color: '#4338ca' } : { background: '#fffbeb', color: '#b45309' }}>
+          <i className="fa-solid fa-user-pen"></i>
+          {eff.active ? (
+            <span>Dicatat atas nama: {eff.onShift.length > 1
+              ? <select value={eff.active.Username} onChange={e => eff.setPicked(e.target.value)} className="font-bold bg-transparent outline-none">{eff.onShift.map(x => <option key={x.Username} value={x.Username}>{x.Name}</option>)}</select>
+              : <b>{eff.active.Name}</b>}</span>
+          ) : <span>Belum ada pegawai yang absen masuk, catatan akan tertulis atas nama akun outlet. Absen dulu di menu Absensi.</span>}
+        </div>
+      );
     }
 
     function AttendanceView({ user, branch }) {
@@ -10007,11 +10050,11 @@
     const CART_STORAGE_KEY = 'qasir_minumes_active_cart';
 
     function POSView({ user, branch, settings }) {
-      const outlet = useOutletStaff(user, branch);
-      const [pickedCashier, setPickedCashier] = useState(() => { try { return localStorage.getItem('pickedCashier') || ''; } catch (e) { return ''; } });
-      const onShiftStaff = outlet.isShared ? (outlet.staff || []).filter(x => x.OnShift) : [];
-      const activeStaff = onShiftStaff.find(x => x.Username === pickedCashier) || onShiftStaff[0] || null;
-      const cashierName = outlet.isShared ? (activeStaff ? activeStaff.Name : user.name) : user.name;
+      const eff = useEffectiveStaff(user, branch);
+      const outlet = { isShared: eff.isShared };
+      const onShiftStaff = eff.onShift;
+      const activeStaff = eff.active;
+      const cashierName = eff.name;
       const [products, setProducts] = useState([]);
       const isManagerRole = !!user && (user.role === 'Owner' || user.role === 'Administrator' || user.role === 'Rekan Bisnis');
       const favKey = favoriteKeyFor(branch ? branch.ID : 'BR001');
@@ -10327,7 +10370,7 @@
                 </div>
                 <div className="leading-tight">
                   {outlet.isShared && onShiftStaff.length > 1 ? (
-                    <select value={activeStaff ? activeStaff.Username : ''} onChange={e => { setPickedCashier(e.target.value); try { localStorage.setItem('pickedCashier', e.target.value); } catch (er) {} }} className="text-xs font-bold text-gray-800 bg-transparent outline-none max-w-[120px]">
+                    <select value={activeStaff ? activeStaff.Username : ''} onChange={e => eff.setPicked(e.target.value)} className="text-xs font-bold text-gray-800 bg-transparent outline-none max-w-[120px]">
                       {onShiftStaff.map(x => <option key={x.Username} value={x.Username}>{x.Name}</option>)}
                     </select>
                   ) : (
