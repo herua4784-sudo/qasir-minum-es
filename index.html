@@ -5414,7 +5414,7 @@
     // RIWAYAT PER MENU — dipakai di bawah form Produksi Batch (kind="batch") dan
     // Koreksi Stok / Stok Terbuang (kind="koreksi"), supaya tiap menu punya riwayatnya sendiri.
     // ==========================================
-    function MovementHistoryPanel({ branch, kind, refreshKey, wasteOnly }) {
+    function MovementHistoryPanel({ branch, kind, refreshKey, wasteOnly, canManage }) {
       const branchId = branch ? branch.ID : 'BR001';
       const [moves, setMoves] = useState([]);
       const [ings, setIngs] = useState({});
@@ -5433,6 +5433,44 @@
       };
       useEffect(() => { setVisible(15); load(refreshKey > 0); }, [branchId, refreshKey]);
       useQueueWatcher(() => load(true));
+
+      // ----- Edit / Hapus (khusus Owner) -----
+      const notify = useNotification();
+      const [edit, setEdit] = useState(null); // { mode: 'qty' | 'batch', id | ref, title, hint, value }
+      const [saving, setSaving] = useState(false);
+      const afterChange = () => {
+        invalidateAllCache();
+        load(true);
+        try { prefetchInventoryScreens(branchId); } catch (e) {}
+      };
+      const doDelete = (ids, message) => {
+        notify.confirm(message, async () => {
+          try {
+            const res = await runGoogleScript('deleteStockMovements', ids, branchId);
+            if (res && res.success) { afterChange(); notify.alert('Catatan dihapus dan stok bahan sudah disesuaikan.', 'Berhasil', 'success'); }
+            else notify.alert((res && res.message) || 'Gagal menghapus.', 'Gagal', 'error');
+          } catch (e) { notify.alert('Butuh koneksi internet untuk menghapus. Coba lagi saat online.', 'Gagal', 'error'); }
+        });
+      };
+      // Tanggal catatan "dd/MM/yy HH:mm" <-> isian datetime-local "yyyy-MM-ddTHH:mm"
+      const toLocalInput = (d) => { const m = String(d || '').match(/^(\d{2})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/); return m ? `20${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}` : ''; };
+      const fromLocalInput = (v) => { const m = String(v || '').match(/^\d{2}(\d{2})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/); return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : ''; };
+      const nowLocalInput = () => { const n = new Date(); const p2 = (x) => String(x).padStart(2, '0'); return `${n.getFullYear()}-${p2(n.getMonth() + 1)}-${p2(n.getDate())}T${p2(n.getHours())}:${p2(n.getMinutes())}`; };
+      const doSaveEdit = async () => {
+        const v = Number(String(edit.value).replace(',', '.'));
+        if (!(v > 0)) { notify.alert('Isi jumlah yang valid (lebih dari 0).', 'Jumlah Tidak Valid', 'error'); return; }
+        const dateOut = edit.date && edit.date !== edit.origDate ? fromLocalInput(edit.date) : '';
+        setSaving(true);
+        try {
+          const res = edit.mode === 'batch'
+            ? await runGoogleScript('editProduceBatch', edit.ref, branchId, v, dateOut)
+            : await runGoogleScript('editStockMovement', edit.id, branchId, { qty: v, ingredientId: edit.ingId, date: dateOut });
+          if (res && res.success) { setEdit(null); afterChange(); notify.alert('Perubahan disimpan dan stok bahan sudah disesuaikan.', 'Berhasil', 'success'); }
+          else notify.alert((res && res.message) || 'Gagal menyimpan.', 'Gagal', 'error');
+        } catch (e) { notify.alert('Butuh koneksi internet untuk menyimpan. Coba lagi saat online.', 'Gagal', 'error'); }
+        setSaving(false);
+      };
+      const iconBtn = (title, icon, color, onClick) => <button type="button" title={title} aria-label={title} onClick={onClick} style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: color, cursor: 'pointer' }}><i className={'fa-solid ' + icon}></i></button>;
 
       const nameOf = (id) => (ings[id] ? ings[id].Name : id);
       const unitOf = (id) => (ings[id] ? ings[id].Unit : '');
@@ -5464,6 +5502,16 @@
                 </div>
                 <div className="text-right flex-shrink-0"><p className="text-xs font-bold text-gray-700">{g.date}</p><p className="text-[11px] text-gray-400">{g.who}</p></div>
               </div>
+              {canManage && (
+                <div className="flex justify-end gap-2 mt-2 pt-2 border-t">
+                  {(() => {
+                    const o = g.out[0]; const y = o && ings[o.Ingredient_ID] ? Number(ings[o.Ingredient_ID].Batch_Yield) : 0;
+                    const cur = o && y > 0 ? Math.round((Number(o.Qty) / y) * 1000) / 1000 : 0;
+                    return cur > 0 ? iconBtn('Edit jumlah batch', 'fa-pen', '#4f46e5', () => setEdit({ mode: 'batch', ref: g.key, title: 'Edit Produksi Batch', hint: `${nameOf(o.Ingredient_ID)}. Hasil & semua bahan terpakai ikut disesuaikan, stok bahan dikoreksi otomatis.`, label: 'Jumlah batch', value: String(cur), date: toLocalInput(g.date), origDate: toLocalInput(g.date) })) : null;
+                  })()}
+                  {iconBtn('Hapus produksi ini', 'fa-trash', '#e11d48', () => doDelete([].concat(g.out, g.used).map(m => m.ID), `Hapus produksi batch ini?\nHasil produksi dikurangi dari stok dan bahan yang terpakai dikembalikan ke stok.`))}
+                </div>
+              )}
             </div>
           );
         });
@@ -5483,6 +5531,12 @@
                 <p className="font-bold text-sm" style={{ color: masuk ? '#059669' : '#e11d48' }}>{masuk ? '+' : '-'}{fmtQ(m.Qty)} {unitOf(m.Ingredient_ID)}</p>
                 <p className="text-[11px] text-gray-500">{m.Date}</p>
                 <p className="text-[11px] text-gray-400">{String(m.Reference || '').split(' / ')[0]}</p>
+                {canManage && (
+                  <div className="flex justify-end gap-2 mt-2">
+                    {iconBtn('Edit catatan', 'fa-pen', '#4f46e5', () => setEdit({ mode: 'move', id: m.ID, title: 'Edit Catatan', hint: `${R(m)}. Stok bahan dikoreksi otomatis.`, label: 'Jumlah', value: String(m.Qty), ingId: m.Ingredient_ID, date: toLocalInput(m.Date), origDate: toLocalInput(m.Date) }))}
+                    {iconBtn('Hapus catatan', 'fa-trash', '#e11d48', () => doDelete([m.ID], `Hapus catatan ini?\n${nameOf(m.Ingredient_ID)} ${masuk ? '+' : '-'}${fmtQ(m.Qty)} ${unitOf(m.Ingredient_ID)}\nStok bahan dikembalikan seperti sebelum catatan ini dibuat.`))}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -5502,6 +5556,35 @@
             : total === 0 ? <p className="text-center text-gray-400 text-sm py-6 bg-white border rounded-xl">Belum ada riwayat.</p>
             : <div className="space-y-2">{body}</div>}
           {total > visible && <button type="button" onClick={() => setVisible(visible + 15)} className="w-full mt-3 py-2 text-sm font-bold text-indigo-600 bg-indigo-50 rounded-lg">Tampilkan lebih banyak ({total - visible} lagi)</button>}
+          {edit && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.45)' }}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-5">
+                <h3 className="font-bold text-gray-800 mb-1">{edit.title}</h3>
+                <p className="text-[11px] text-gray-500 mb-3">{edit.hint}</p>
+                {edit.mode === 'move' && (
+                  <div className="mb-3">
+                    <label className="block text-xs font-bold text-gray-600 mb-1">Nama bahan</label>
+                    <select value={edit.ingId} onChange={e => setEdit({ ...edit, ingId: e.target.value })} className="w-full px-3 py-2.5 border rounded-xl outline-none text-sm bg-white">
+                      {Object.values(ings).sort((a, b) => String(a.Name).localeCompare(String(b.Name))).map(i => <option key={i.ID} value={i.ID}>{i.Name} ({i.Unit})</option>)}
+                    </select>
+                    {edit.ingId !== (moves.find(x => x.ID === edit.id) || {}).Ingredient_ID && <p className="text-[10px] mt-1" style={{ color: '#d97706' }}>Bahan diganti: stok bahan lama dikembalikan, stok bahan baru dikurangi/ditambah. Pastikan jumlah memakai satuan {unitOf(edit.ingId)}.</p>}
+                  </div>
+                )}
+                <label className="block text-xs font-bold text-gray-600 mb-1">{edit.label}{edit.mode === 'move' ? ' (' + unitOf(edit.ingId) + ')' : ''}</label>
+                <input type="text" inputMode="decimal" autoFocus value={edit.value} onChange={e => setEdit({ ...edit, value: e.target.value.replace(/[^0-9.,]/g, '') })} className="w-full px-3 py-2.5 border rounded-xl outline-none text-lg font-bold" />
+                {edit.origDate !== undefined && edit.origDate !== '' && (
+                  <div className="mt-3">
+                    <label className="block text-xs font-bold text-gray-600 mb-1">Tanggal & jam</label>
+                    <input type="datetime-local" value={edit.date} max={nowLocalInput()} onChange={e => setEdit({ ...edit, date: e.target.value })} className="w-full px-3 py-2.5 border rounded-xl outline-none text-sm" />
+                  </div>
+                )}
+                <div className="flex gap-2 mt-4">
+                  <button type="button" onClick={() => setEdit(null)} className="flex-1 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-bold">Batal</button>
+                  <button type="button" disabled={saving} onClick={doSaveEdit} className="flex-1 py-2.5 rounded-xl bg-indigo-600 disabled:bg-gray-300 text-white font-bold">{saving ? 'Menyimpan...' : 'Simpan'}</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -5525,7 +5608,7 @@
       return (
         <div className="h-full overflow-y-auto">
           <ProduceBatchForm user={user} branch={branch} onDone={() => setHistKey(k => k + 1)} />
-          <MovementHistoryPanel branch={branch} kind="batch" refreshKey={histKey} />
+          <MovementHistoryPanel branch={branch} kind="batch" refreshKey={histKey} canManage={!!user && user.role === 'Owner'} />
         </div>
       );
     }
@@ -6482,7 +6565,7 @@
       return (
         <div className="h-full overflow-y-auto">
           <StockMovementForm user={user} branch={branch} wasteOnly={wasteOnly} onDone={() => setHistKey(k => k + 1)} />
-          <MovementHistoryPanel branch={branch} kind="koreksi" wasteOnly={wasteOnly} refreshKey={histKey} />
+          <MovementHistoryPanel branch={branch} kind="koreksi" wasteOnly={wasteOnly} refreshKey={histKey} canManage={!!user && user.role === 'Owner'} />
         </div>
       );
     }
