@@ -7886,7 +7886,7 @@
       // Belanja laci yang sudah tersimpan di server + yang masih menunggu sinkron (dibuat saat offline).
       const savedItems = (st && Array.isArray(st.drawerItems)) ? st.drawerItems : [];
       const pendAddItems = [];
-      pend.adds.forEach(q => (Array.isArray(q.args[2]) ? q.args[2] : []).forEach((it, k) => { if (Number(it.amount) > 0) pendAddItems.push({ key: 'p' + q.id + '-' + k, queueId: q.id, label: drawerLabel(it) + (it.type !== 'lain' && it.note ? ' (' + it.note + ')' : ''), amount: Number(it.amount) }); }));
+      pend.adds.forEach(q => (Array.isArray(q.args[2]) ? q.args[2] : []).forEach((it, k) => { if (Number(it.amount) > 0) pendAddItems.push({ key: 'p' + q.id + '-' + k, queueId: q.id, idx: k, label: drawerLabel(it) + (it.type !== 'lain' && it.note ? ' (' + it.note + ')' : ''), amount: Number(it.amount) }); }));
       const serverDex = st && st.record ? (Number(st.record.Drawer_Expense) || 0) : 0;
       const dexSaved = serverDex + pendAddItems.reduce((t, it) => t + it.amount, 0);
       let rec = st && st.record;
@@ -7935,7 +7935,18 @@
           if (res && res.success) load(true); else notify.alert((res && res.message) || 'Gagal menghapus.', 'Gagal', 'error');
         } catch (e) { notify.alert('Menghapus butuh koneksi internet. Coba lagi saat online.', 'Tidak Ada Internet', 'error'); }
       });
-      const doDeletePending = (it) => notify.confirm('Batalkan catatan belanja yang belum terkirim?', async () => { await queueRemoveWrite(it.queueId); refreshLocal(); });
+      // Batalkan SATU baris belanja yang belum terkirim (baris lain dalam kiriman yang sama tetap).
+      const doDeletePending = (it) => notify.confirm('Batalkan "' + it.label + '" ' + rpFmt(it.amount) + ' yang belum terkirim?', async () => {
+        try {
+          const q = ((await queueGetAllWrites()) || []).find(x => x.id === it.queueId);
+          if (q) {
+            const left = (Array.isArray(q.args[2]) ? q.args[2] : []).filter((_, i) => i !== it.idx).filter(x => Number(x.amount) > 0);
+            if (left.length === 0) await queueRemoveWrite(q.id);
+            else { q.args = q.args.slice(); q.args[2] = left; await queueUpdateWrite(q); }
+          }
+        } catch (e) {}
+        refreshLocal();
+      });
 
       const doClose = async () => {
         if (dItems.some(it => Number(it.amount) > 0)) { notify.alert('Ada belanja dari laci yang belum disimpan. Tekan "Simpan Belanja" dulu, atau hapus barisnya.', 'Belanja Belum Disimpan', 'error'); return; }
