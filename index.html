@@ -234,7 +234,7 @@
     // tetap kekosong seperti biasa), lalu OTOMATIS dikirim ke server begitu internet
     // kembali -- tanpa kasir perlu input ulang apapun.
     // ==========================================
-    const OFFLINE_QUEUEABLE_FUNCTIONS = ['saveTransaction', 'recordAttendance', 'recordStockMovement', 'produceBatch'];
+    const OFFLINE_QUEUEABLE_FUNCTIONS = ['saveTransaction', 'recordAttendance', 'recordStockMovement', 'produceBatch', 'openOutlet', 'closeOutlet'];
 
     // ==========================================
     // KUNCI ANTI-GANDA: tiap permintaan tulis diberi "kunci unik" SEKALI saat pertama
@@ -244,7 +244,7 @@
     // tidak ditulis dua kali. Kunci diletakkan sebagai argumen TERAKHIR; jumlah
     // argumen baku tiap fungsi dicatat di bawah supaya posisinya selalu tepat.
     // ==========================================
-    const QUEUEABLE_ARITY = { saveTransaction: 9, recordAttendance: 4, recordStockMovement: 8, produceBatch: 4 };
+    const QUEUEABLE_ARITY = { saveTransaction: 9, recordAttendance: 4, recordStockMovement: 8, produceBatch: 4, openOutlet: 4, closeOutlet: 6 };
 
     function newRequestId() {
       try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* lanjut ke cara cadangan */ }
@@ -322,6 +322,10 @@
         // Stok hasil produksi tidak bisa dipastikan saat offline (newStock null, ditangani khusus
         // di tampilan). Jam pencatatan asli ikut tersimpan supaya riwayat tidak memakai jam sinkron.
         return { success: true, newStock: null, unit: '', date: pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + String(now.getFullYear()).slice(-2) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) };
+      }
+      if (functionName === 'openOutlet' || functionName === 'closeOutlet') {
+        // Jam asli ikut tersimpan: buka/tutup yang baru terkirim lewat tengah malam tetap tercatat di tanggalnya.
+        return { success: true, clientTime: pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) };
       }
       return { success: true };
     }
@@ -673,6 +677,46 @@
     // Hanya untuk fungsi di OFFLINE_CACHEABLE_FUNCTIONS.
     const runGoogleScriptFresh = (functionName, ...args) => cachedRead(functionName, args, true);
 
+    // Langsung masuk antrian TANPA mencoba server dulu (dipakai Tutup Outlet kalau masih ada
+    // transaksi yang belum terkirim: tutup harus menyusul SETELAH transaksinya di antrian).
+    function queueWriteOnly(functionName, ...args) {
+      const keyedArgs = withRequestId(functionName, args);
+      const optimistic = buildOptimisticResult(functionName);
+      const queuedArgs = (functionName === 'openOutlet' || functionName === 'closeOutlet') ? keyedArgs.concat([optimistic.clientTime]) : keyedArgs;
+      return queueAddWrite({ functionName, args: queuedArgs, optimistic, createdAt: Date.now() }).then(() => Object.assign({}, optimistic, { offlineQueued: true }));
+    }
+
+    // ==========================================
+    // BUKU PENJUALAN HARI INI DI TABLET: tiap penjualan yang dibuat di tablet ini dicatat ringkas
+    // (tunai/QRIS), supaya Buka/Tutup Outlet tetap bisa menghitung rekap & selisih kas saat offline.
+    // ==========================================
+    function dayStrLocal() { const n = new Date(), p = (x) => String(x).padStart(2, '0'); return p(n.getDate()) + '/' + p(n.getMonth() + 1) + '/' + n.getFullYear(); }
+    function ledgerAdd(branchId, rid, method, total) {
+      const key = 'ledger:' + branchId + ':' + dayStrLocal();
+      return offlineCacheGet(key).then(L => {
+        const book = L || { byId: {} };
+        if (!book.byId[rid]) book.byId[rid] = { m: String(method || 'Tunai'), t: Number(total) || 0, at: Date.now() };
+        return offlineCacheSet(key, book);
+      }).catch(() => {});
+    }
+    // Rekap hari ini: patokan dari server terakhir (kalau ada) + penjualan sesudahnya / yang belum terkirim.
+    async function localDaySummary(branchId) {
+      const day = dayStrLocal();
+      const book = (await offlineCacheGet('ledger:' + branchId + ':' + day).catch(() => null)) || { byId: {} };
+      const base = await offlineCacheGet('daybase:' + branchId + ':' + day).catch(() => null);
+      const q = await queueGetAllWrites();
+      const pendIds = {};
+      q.filter(i => i.functionName === 'saveTransaction' && !i.failed).forEach(i => { pendIds[i.args[9]] = true; });
+      const byMethod = base && base.summary ? Object.assign({}, base.summary.byMethod || {}) : {};
+      let count = base && base.summary ? Number(base.summary.count) || 0 : 0;
+      let total = base && base.summary ? Number(base.summary.total) || 0 : 0;
+      Object.keys(book.byId).forEach(rid => {
+        const e = book.byId[rid];
+        if (!base || e.at >= base.at || pendIds[rid]) { count++; total += e.t; byMethod[e.m] = (byMethod[e.m] || 0) + e.t; }
+      });
+      return { count, total, voided: 0, byMethod, cash: byMethod['Tunai'] || 0, qris: byMethod['QRIS'] || 0 };
+    }
+
     // Versi yang BENAR-BENAR dipakai di seluruh aplikasi (semua pemanggilan
     // runGoogleScript(...) yang sudah ada otomatis lewat sini, tidak perlu diubah
     // satu-satu di tempat lain).
@@ -684,15 +728,17 @@
         // Kunci dibuat SEKALI di sini; kalau percobaan pertama gagal dan masuk antrian,
         // kunci yang sama ikut tersimpan dan dipakai lagi saat dikirim ulang.
         const keyedArgs = withRequestId(functionName, args);
+        const noteSale = () => { if (functionName === 'saveTransaction') ledgerAdd(keyedArgs[8], keyedArgs[9], keyedArgs[5], keyedArgs[3]); };
         return runGoogleScriptRaw(functionName, ...keyedArgs).then((res) => {
-          if (res && res.success !== false) markReadsDirty(functionName);
+          if (res && res.success !== false) { markReadsDirty(functionName); noteSale(); }
           return res;
         }).catch((err) => {
           const optimistic = buildOptimisticResult(functionName);
           // Transaksi offline: ikutkan nomor & jam yang SUDAH tercetak di struk, supaya
           // server mencatat persis yang sama (bukan nomor/jam saat sinkron).
-          const queuedArgs = functionName === 'saveTransaction' ? keyedArgs.concat([optimistic.trxId, optimistic.date]) : (functionName === 'produceBatch' ? keyedArgs.concat([optimistic.date]) : keyedArgs);
+          const queuedArgs = functionName === 'saveTransaction' ? keyedArgs.concat([optimistic.trxId, optimistic.date]) : (functionName === 'produceBatch' ? keyedArgs.concat([optimistic.date]) : ((functionName === 'openOutlet' || functionName === 'closeOutlet') ? keyedArgs.concat([optimistic.clientTime]) : keyedArgs));
           return queueAddWrite({ functionName, args: queuedArgs, optimistic, createdAt: Date.now() }).then(() => {
+            noteSale();
             console.warn('[Offline] ' + functionName + ' disimpan ke antrian lokal, akan otomatis dikirim begitu online.');
             return Object.assign({}, optimistic, { offlineQueued: true });
           });
@@ -7785,6 +7831,9 @@
       const eff = useEffectiveStaff(user, branch);
       const branchId = branch ? branch.ID : 'BR001';
       const [st, setSt] = useState(null);
+      const [stale, setStale] = useState(true); // true = belum ada jawaban segar dari server (offline / masih memuat)
+      const [pend, setPend] = useState({ open: null, close: null, sales: 0 });
+      const [localSum, setLocalSum] = useState(null);
       const [loading, setLoading] = useState(true);
       const [cash, setCash] = useState('');
       const [note, setNote] = useState('');
@@ -7795,44 +7844,96 @@
       const [busy, setBusy] = useState(false);
       const [cashTouched, setCashTouched] = useState(false);
 
-      const load = (skip) => swrFetch('outday:' + branchId + ':' + attDayKey(), () => runGoogleScript('getOutletDayStatus', branchId), (d) => { setSt(d); setLoading(false); }, () => setLoading(false), skip);
-      useEffect(() => { load(); }, []);
+      const refreshLocal = () => {
+        Promise.all([queueGetAllWrites(), localDaySummary(branchId)]).then(([q, ls]) => {
+          const act = (q || []).filter(i => !i.failed);
+          setPend({
+            open: act.find(i => i.functionName === 'openOutlet' && i.args[0] === branchId) || null,
+            close: act.find(i => i.functionName === 'closeOutlet' && i.args[0] === branchId) || null,
+            sales: act.filter(i => i.functionName === 'saveTransaction' && i.args[8] === branchId).length
+          });
+          setLocalSum(ls);
+        }).catch(() => {});
+      };
+      // Status hari ini kalau server tidak terjangkau dan belum ada simpanan: form Buka tetap bisa dipakai.
+      const buildFallbackStatus = async () => {
+        let sug = 0;
+        try {
+          const nx = await offlineCacheGet('outnext:' + branchId);
+          if (nx && nx.date !== dayStrLocal()) sug = Number(nx.next) || 0; else sug = Number(await offlineCacheGet('outsug:' + branchId)) || 0;
+        } catch (e) {}
+        let low = [];
+        try {
+          const ings = await runGoogleScript('getIngredients', branchId);
+          low = (ings || []).filter(i => Number(i.Min_Stock) > 0 && effStock(i) <= Number(i.Min_Stock)).map(i => ({ name: i.Name, unit: i.Unit, stock: Math.round(effStock(i) * 100) / 100, min: Number(i.Min_Stock) }));
+        } catch (e) {}
+        return { date: dayStrLocal(), record: null, suggestedOpeningCash: sug, summary: { count: 0, total: 0, cash: 0, qris: 0, byMethod: {} }, waste: [], lowStock: low };
+      };
+      const load = (skip) => swrFetch('outday:' + branchId + ':' + attDayKey(), () => runGoogleScript('getOutletDayStatus', branchId), (d, fromCache) => {
+        setSt(d); setLoading(false); setStale(!!fromCache);
+        if (!fromCache) { try { offlineCacheSet('daybase:' + branchId + ':' + dayStrLocal(), { summary: d.summary, at: Date.now() }); offlineCacheSet('outsug:' + branchId, d.suggestedOpeningCash || 0); } catch (e) {} }
+        refreshLocal();
+      }, () => { setStale(true); buildFallbackStatus().then(fb => { setSt(prev => prev || fb); setLoading(false); refreshLocal(); }); }, skip);
+      useEffect(() => { load(); const t = setInterval(refreshLocal, 4000); return () => clearInterval(t); }, []);
+      useQueueWatcher(() => { refreshLocal(); load(true); });
       useEffect(() => { if (st && !st.record && !cashTouched && st.suggestedOpeningCash) setCash(String(st.suggestedOpeningCash)); }, [st]);
 
-      const rec = st && st.record;
+      const zeroSum = { count: 0, total: 0, cash: 0, qris: 0, byMethod: {} };
+      // Selama offline / masih ada yang antri, rekap dihitung dari penjualan di tablet ini (perkiraan).
+      const useLocal = stale || pend.sales > 0 || !!pend.open || !!pend.close;
+      const sum = (useLocal && localSum) ? localSum : ((st && st.summary) || zeroSum);
+      const fmtWhen = (item) => { const d = new Date(item.createdAt || Date.now()), p = (x) => String(x).padStart(2, '0'); return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); };
+      let rec = st && st.record;
+      if (st && !(rec && rec.Opened_At) && pend.open) {
+        rec = { Opened_By: pend.open.args[1], Opened_At: fmtWhen(pend.open), Opening_Cash: Number(pend.open.args[2]) || 0, Opening_Note: pend.open.args[3] || '', Closed: false, _pending: true };
+      }
+      if (rec && rec.Opened_At && !rec.Closed && pend.close) {
+        const a = pend.close.args, its = Array.isArray(a[5]) ? a[5] : [];
+        const dx = its.reduce((t, it) => t + (Number(it.amount) || 0), 0);
+        const exp = (Number(rec.Opening_Cash) || 0) + sum.cash - dx;
+        rec = Object.assign({}, rec, { Closed: true, Closed_By: a[1], Closed_At: fmtWhen(pend.close), Trx_Count: sum.count, Total_Sales: sum.total, Cash_Sales: sum.cash, Qris_Sales: sum.qris, Expected_Cash: exp, Counted_Cash: Number(a[2]) || 0, Difference: (Number(a[2]) || 0) - exp, Deposit: Number(a[3]) || 0, Next_Opening_Cash: (Number(a[2]) || 0) - (Number(a[3]) || 0), Notes: a[4] || '', Drawer_Expense: dx, Drawer_Note: its.filter(it => Number(it.amount) > 0).map(it => (it.type === 'air' ? 'Beli Air' : it.type === 'gas' ? 'Beli Gas LPG 3kg' : (it.note || 'Lainnya'))).join(', '), _pending: true });
+      }
       const opened = !!(rec && rec.Opened_At);
       const closed = !!(rec && rec.Closed);
-      const sum = (st && st.summary) || { count: 0, total: 0, cash: 0, qris: 0, byMethod: {} };
 
       const doOpen = async () => {
         if (cash === '') { notify.alert('Isi kas awal dulu (hitung uang di laci). Kalau kosong isi 0.', 'Kas Awal Belum Diisi', 'error'); return; }
         setBusy(true);
         try {
           const res = await runGoogleScript('openOutlet', branchId, eff.name, Number(cash), note, newRequestId());
-          if (res && res.success) { notify.alert('Outlet dibuka atas nama ' + eff.name + '. Kas awal ' + rpFmt(cash) + ' tercatat.', 'Outlet Dibuka', 'success'); load(true); }
+          if (res && res.success && res.offlineQueued) { notify.alert('Outlet dibuka atas nama ' + eff.name + '. Kas awal ' + rpFmt(cash) + ' tersimpan di tablet dan dikirim otomatis saat internet kembali.', 'Dibuka (Offline)', 'success'); refreshLocal(); }
+          else if (res && res.success) { notify.alert('Outlet dibuka atas nama ' + eff.name + '. Kas awal ' + rpFmt(cash) + ' tercatat.', 'Outlet Dibuka', 'success'); load(true); }
           else { notify.alert((res && res.message) || 'Gagal mencatat.', 'Gagal', 'error'); load(true); }
-        } catch (e) { notify.alert('Buka outlet butuh koneksi internet. Coba lagi saat online.', 'Tidak Ada Internet', 'error'); }
+        } catch (e) { notify.alert('Gagal mencatat buka outlet. Coba lagi.', 'Gagal', 'error'); }
         setBusy(false);
       };
 
       const doClose = async () => {
         if (counted === '') { notify.alert('Hitung uang di laci lalu isi jumlahnya.', 'Uang Fisik Belum Diisi', 'error'); return; }
         if (Number(deposit || 0) > Number(counted)) { notify.alert('Setoran tidak boleh lebih besar dari uang yang dihitung.', 'Setoran Tidak Valid', 'error'); return; }
-        try {
-          const q = await queueGetAllWrites();
-          const pend = (q || []).filter(it => it.functionName === 'saveTransaction').length;
-          if (pend > 0) { notify.alert(pend + ' transaksi masih belum terkirim ke server (offline). Tunggu sampai terkirim dulu supaya rekap hari ini lengkap, lalu tutup outlet.', 'Transaksi Belum Terkirim', 'error'); return; }
-        } catch (e) {}
         notify.confirm('Tutup outlet sekarang?\nUang fisik ' + rpFmt(counted) + (dex > 0 ? ', dipakai belanja dari laci ' + rpFmt(dex) : '') + ', setoran ' + rpFmt(deposit || 0) + '. Setelah ditutup tidak bisa diubah.', async () => {
           setBusy(true);
           try {
-            const res = await runGoogleScript('closeOutlet', branchId, eff.name, Number(counted), Number(deposit || 0), notes, dItems.map(it => ({ type: it.type, note: it.note, amount: Number(it.amount) || 0 })), newRequestId());
+            const items = dItems.map(it => ({ type: it.type, note: it.note, amount: Number(it.amount) || 0 }));
+            // Coba kirim dulu transaksi yang masih antri; kalau masih ada yang belum terkirim, tutup ikut antri
+            // (disusulkan SESUDAH transaksinya) dan selisih dihitung dari penjualan di tablet ini.
+            let stillPending = 0;
+            try { await trySyncOfflineQueue(); stillPending = ((await queueGetAllWrites()) || []).filter(i => !i.failed && i.functionName === 'saveTransaction').length; } catch (e) {}
+            const res = stillPending > 0
+              ? await queueWriteOnly('closeOutlet', branchId, eff.name, Number(counted), Number(deposit || 0), notes, items)
+              : await runGoogleScript('closeOutlet', branchId, eff.name, Number(counted), Number(deposit || 0), notes, items, newRequestId());
             if (res && res.success) {
-              const d = Math.round(res.difference);
-              notify.alert(d === 0 ? 'Uang di laci PAS. Outlet ditutup.' : (d > 0 ? 'Uang LEBIH ' + rpFmt(d) : 'Uang KURANG ' + rpFmt(-d) + '. Hitung ulang uang di laci kalau belum yakin.') + '\nSisa di laci untuk besok: ' + rpFmt(res.nextOpeningCash), d === 0 ? 'Outlet Ditutup' : 'Selisih Kas', d === 0 ? 'success' : 'warning');
-              load(true);
+              try { offlineCacheSet('outnext:' + branchId, { date: dayStrLocal(), next: Number(counted) - Number(deposit || 0) }); } catch (e) {}
+              let d, nextCash, est = false;
+              if (res.offlineQueued) {
+                const ls = await localDaySummary(branchId);
+                const expected = (opened ? Number(rec.Opening_Cash) : 0) + ls.cash - dex;
+                d = Math.round(Number(counted) - expected); nextCash = Number(counted) - Number(deposit || 0); est = true;
+              } else { d = Math.round(res.difference); nextCash = res.nextOpeningCash; }
+              notify.alert((d === 0 ? 'Uang di laci PAS. Outlet ditutup.' : (d > 0 ? 'Uang LEBIH ' + rpFmt(d) : 'Uang KURANG ' + rpFmt(-d) + '. Hitung ulang uang di laci kalau belum yakin.')) + '\nSisa di laci untuk besok: ' + rpFmt(nextCash) + (est ? '\n\nHitungan dari penjualan di tablet ini (perkiraan). Tersimpan offline dan dicek ulang server saat internet kembali.' : ''), d === 0 ? 'Outlet Ditutup' : 'Selisih Kas', d === 0 ? 'success' : 'warning');
+              if (res.offlineQueued) refreshLocal(); else load(true);
             } else { notify.alert((res && res.message) || 'Gagal menutup outlet.', 'Gagal', 'error'); load(true); }
-          } catch (e) { notify.alert('Tutup outlet butuh koneksi internet. Coba lagi saat online.', 'Tidak Ada Internet', 'error'); }
+          } catch (e) { notify.alert('Gagal menutup outlet. Coba lagi.', 'Gagal', 'error'); }
           setBusy(false);
         });
       };
@@ -7862,10 +7963,15 @@
 
             {st && (
               <>
+                {useLocal && (stale || pend.sales > 0) && (
+                  <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', borderRadius: 12, padding: '8px 12px', fontSize: 12, fontWeight: 600, marginBottom: 12 }}>
+                    <i className="fa-solid fa-wifi mr-1.5"></i>{stale ? 'Mode offline: rekap dihitung dari penjualan di tablet ini (perkiraan). Akan dicek ulang server saat online.' : pend.sales + ' transaksi belum terkirim; rekap memakai hitungan tablet ini.'}
+                  </div>
+                )}
                 {/* STATUS */}
                 <div style={{ ...card, background: closed ? '#f1f5f9' : opened ? '#ecfdf5' : '#fffbeb' }}>
-                  {closed ? <p className="text-sm font-bold text-gray-700"><i className="fa-solid fa-lock mr-2"></i>Outlet sudah ditutup oleh {rec.Closed_By} · {String(rec.Closed_At).substring(11)}</p>
-                    : opened ? <p className="text-sm font-bold" style={{ color: '#047857' }}><i className="fa-solid fa-door-open mr-2"></i>Dibuka oleh {rec.Opened_By} · {String(rec.Opened_At).substring(11)} · Kas awal {rpFmt(rec.Opening_Cash)}</p>
+                  {closed ? <p className="text-sm font-bold text-gray-700"><i className="fa-solid fa-lock mr-2"></i>Outlet sudah ditutup oleh {rec.Closed_By} · {String(rec.Closed_At).substring(11)}{rec._pending ? ' · menunggu sinkron' : ''}</p>
+                    : opened ? <p className="text-sm font-bold" style={{ color: '#047857' }}><i className="fa-solid fa-door-open mr-2"></i>Dibuka oleh {rec.Opened_By} · {String(rec.Opened_At).substring(11)} · Kas awal {rpFmt(rec.Opening_Cash)}{rec._pending ? ' · menunggu sinkron' : ''}</p>
                     : <p className="text-sm font-bold" style={{ color: '#b45309' }}><i className="fa-solid fa-door-closed mr-2"></i>Outlet belum dibuka hari ini</p>}
                 </div>
 
@@ -7964,7 +8070,7 @@
                 {closed && (
                   <div style={card}>
                     <h3 className="font-bold text-gray-800 mb-3">Hasil Tutup Outlet</h3>
-                    <div className="text-center mb-3"><DiffBadge diff={rec.Difference} big /></div>
+                    <div className="text-center mb-3"><DiffBadge diff={rec.Difference} big />{rec._pending && <p className="text-[11px] text-amber-700 font-semibold mt-1">Perkiraan (dari penjualan di tablet ini), dicek ulang server saat online</p>}</div>
                     <div className="flex justify-between text-sm py-1.5 border-b border-gray-50"><span className="text-gray-600">Uang fisik dihitung</span><span className="font-bold">{rpFmt(rec.Counted_Cash)}</span></div>
                     <div className="flex justify-between text-sm py-1.5 border-b border-gray-50"><span className="text-gray-600">Disetor</span><span className="font-bold">{rpFmt(rec.Deposit)}</span></div>
                     <div className="flex justify-between text-sm py-1.5"><span className="text-gray-600">Sisa di laci untuk besok</span><span className="font-bold">{rpFmt(rec.Next_Opening_Cash)}</span></div>
