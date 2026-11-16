@@ -234,7 +234,7 @@
     // tetap kekosong seperti biasa), lalu OTOMATIS dikirim ke server begitu internet
     // kembali -- tanpa kasir perlu input ulang apapun.
     // ==========================================
-    const OFFLINE_QUEUEABLE_FUNCTIONS = ['saveTransaction', 'recordAttendance', 'recordStockMovement', 'produceBatch', 'openOutlet', 'closeOutlet'];
+    const OFFLINE_QUEUEABLE_FUNCTIONS = ['saveTransaction', 'recordAttendance', 'recordStockMovement', 'produceBatch', 'openOutlet', 'closeOutlet', 'addUangMakan'];
 
     // ==========================================
     // KUNCI ANTI-GANDA: tiap permintaan tulis diberi "kunci unik" SEKALI saat pertama
@@ -244,7 +244,7 @@
     // tidak ditulis dua kali. Kunci diletakkan sebagai argumen TERAKHIR; jumlah
     // argumen baku tiap fungsi dicatat di bawah supaya posisinya selalu tepat.
     // ==========================================
-    const QUEUEABLE_ARITY = { saveTransaction: 9, recordAttendance: 4, recordStockMovement: 8, produceBatch: 4, openOutlet: 4, closeOutlet: 6 };
+    const QUEUEABLE_ARITY = { saveTransaction: 9, recordAttendance: 4, recordStockMovement: 8, produceBatch: 4, openOutlet: 4, closeOutlet: 6, addUangMakan: 3 };
 
     function newRequestId() {
       try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* lanjut ke cara cadangan */ }
@@ -355,7 +355,8 @@
           let trxId = item.savedTrxId;
           if (!(item.functionName === 'saveTransaction' && trxId)) {
             const res = await runGoogleScriptRaw(item.functionName, ...item.args);
-            if (!(res && res.success)) {
+            // Uang Makan yang ternyata sudah tercatat di server = tujuan tercapai, bukan kegagalan.
+            if (!(res && res.success) && !(item.functionName === 'addUangMakan' && res && res.alreadyExists)) {
               const rejected = new Error((res && res.message) || 'Ditolak server');
               rejected.serverError = true;
               throw rejected;
@@ -8246,12 +8247,35 @@
       const doUangMakan = async () => {
         if (pin.length < 4) { setErr('Masukkan PIN 4-6 angka.'); return; }
         setBusy(true); setErr('');
+        const dateStr = new Date().toLocaleDateString('id-ID');
+        const dupKey = 'um:' + sel.Username + ':' + dateStr;
         try {
-          const res = await runGoogleScript('addUangMakanByPin', sel.Username, pin, new Date().toLocaleDateString('id-ID'), branchId);
-          if (res && res.success) { const nm = sel.Name; close(); notify.alert(`Uang Makan hari ini untuk ${nm} tercatat.`, 'Berhasil', 'success'); }
-          else if (res && res.alreadyExists) { setErr('Uang Makan hari ini sudah pernah dicatat.'); }
+          const res = await runGoogleScript('addUangMakanByPin', sel.Username, pin, dateStr, branchId);
+          if (res && res.success) { try { localStorage.setItem(dupKey, '1'); } catch (e) {} const nm = sel.Name; close(); notify.alert(`Uang Makan hari ini untuk ${nm} tercatat.`, 'Berhasil', 'success'); }
+          else if (res && res.alreadyExists) { try { localStorage.setItem(dupKey, '1'); } catch (e) {} setErr('Uang Makan hari ini sudah pernah dicatat.'); }
           else { setErr((res && res.message) || 'Gagal mencatat.'); setPin(''); }
-        } catch (e) { setErr('Uang Makan butuh koneksi internet. Coba lagi saat online.'); }
+        } catch (e) {
+          // Tidak ada koneksi: cek PIN di tablet, cegah dobel, lalu simpan ke antrian (terkirim otomatis saat online).
+          try {
+            const v = await verifyLocal(sel, pin);
+            if (!v.ok) { setErr(v.message); setPin(''); }
+            else {
+              let dup = false;
+              try { dup = !!localStorage.getItem(dupKey); } catch (er) {}
+              const q = (await queueGetAllWrites()) || [];
+              dup = dup || q.some(i => i.functionName === 'addUangMakan' && !i.failed && i.args[0] === sel.Username && i.args[1] === dateStr);
+              if (dup) setErr('Uang Makan hari ini sudah pernah dicatat.');
+              else {
+                const r2 = await runGoogleScript('addUangMakan', sel.Username, dateStr, branchId);
+                if (r2 && r2.success) {
+                  try { localStorage.setItem(dupKey, '1'); } catch (er) {}
+                  const nm = sel.Name; close(); outlet.reloadPending();
+                  notify.alert(`Uang Makan hari ini untuk ${nm} tercatat (offline). Terkirim otomatis saat internet kembali.`, 'Tersimpan Offline', 'success');
+                } else setErr('Gagal menyimpan Uang Makan.');
+              }
+            }
+          } catch (e2) { setErr('Gagal menyimpan Uang Makan.'); }
+        }
         setBusy(false);
       };
 
@@ -8419,7 +8443,7 @@
             const todayStr = new Date().toLocaleDateString('id-ID');
             const res = await runGoogleScript('addUangMakan', user.username, todayStr, branchId);
             if (res.success) {
-              notify.alert("Uang Makan hari ini berhasil dicatat.", "Berhasil", "success");
+              notify.alert(res.offlineQueued ? "Uang Makan hari ini tersimpan offline dan terkirim otomatis saat internet kembali." : "Uang Makan hari ini berhasil dicatat.", res.offlineQueued ? "Tersimpan Offline" : "Berhasil", "success");
               loadUmStatus();
             } else if (res.alreadyExists) {
               notify.alert("Uang Makan hari ini sudah pernah dicatat sebelumnya.", "Sudah Tercatat", "info");
