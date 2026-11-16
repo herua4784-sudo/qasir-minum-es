@@ -234,7 +234,7 @@
     // tetap kekosong seperti biasa), lalu OTOMATIS dikirim ke server begitu internet
     // kembali -- tanpa kasir perlu input ulang apapun.
     // ==========================================
-    const OFFLINE_QUEUEABLE_FUNCTIONS = ['saveTransaction', 'recordAttendance', 'recordStockMovement'];
+    const OFFLINE_QUEUEABLE_FUNCTIONS = ['saveTransaction', 'recordAttendance', 'recordStockMovement', 'produceBatch'];
 
     // ==========================================
     // KUNCI ANTI-GANDA: tiap permintaan tulis diberi "kunci unik" SEKALI saat pertama
@@ -244,7 +244,7 @@
     // tidak ditulis dua kali. Kunci diletakkan sebagai argumen TERAKHIR; jumlah
     // argumen baku tiap fungsi dicatat di bawah supaya posisinya selalu tepat.
     // ==========================================
-    const QUEUEABLE_ARITY = { saveTransaction: 9, recordAttendance: 4, recordStockMovement: 8 };
+    const QUEUEABLE_ARITY = { saveTransaction: 9, recordAttendance: 4, recordStockMovement: 8, produceBatch: 4 };
 
     function newRequestId() {
       try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* lanjut ke cara cadangan */ }
@@ -317,6 +317,11 @@
         // sengaja null, ditangani khusus di tampilan (pesan sukses generik, bukan
         // angka spesifik yang bisa salah).
         return { success: true, newStock: null };
+      }
+      if (functionName === 'produceBatch') {
+        // Stok hasil produksi tidak bisa dipastikan saat offline (newStock null, ditangani khusus
+        // di tampilan). Jam pencatatan asli ikut tersimpan supaya riwayat tidak memakai jam sinkron.
+        return { success: true, newStock: null, unit: '', date: pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + String(now.getFullYear()).slice(-2) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) };
       }
       return { success: true };
     }
@@ -451,6 +456,19 @@
       return { qtyNum: qtyNum, note: note, signed: type === 'Masuk' ? qtyNum : -qtyNum };
     }
 
+    // Resep produksi (racikan) dari simpanan lokal, untuk menghitung efek produksi batch yang masih antri.
+    function lookupCachedRecipes(branchId) {
+      return offlineCacheGet('swr:prodbatch:' + branchId).then(d => (d && d.rec) || []).catch(() => []);
+    }
+    // Produksi batch di antrian -> daftar perubahan stok: bahan mentah keluar, hasil olahan masuk.
+    // Aturan sama dengan produceBatch di Kode.gs (resep x jumlah batch; hasil = Batch_Yield x batch).
+    function expandPendingBatch(item, ingList, recipes) {
+      const outId = item.args[0], batches = Number(item.args[1]) || 0;
+      const out = (ingList || []).find(i => i.ID === outId);
+      const comps = (recipes || []).filter(r => r.Output_Ingredient_ID === outId).map(r => ({ id: r.Component_Ingredient_ID, qty: (Number(r.Component_Qty) || 0) * batches }));
+      return { outId, outQty: out ? (Number(out.Batch_Yield) || 0) * batches : 0, comps, user: item.args[2] };
+    }
+
     // Fungsi mana saja yang hasilnya perlu "digabung" dengan data di antrian
     // offline yang masih menunggu sinkron -- supaya kasir langsung lihat hasil
     // kerjanya sendiri (transaksi/absensi barusan) di Riwayat, TANPA perlu
@@ -514,6 +532,7 @@
           // (args[3]); catatan antrian selalu manual, jadi cuma filter jenis yang berlaku.
           const typeFilter = (functionName === 'getRecentStockMovements' && (args[2] === 'Masuk' || args[2] === 'Keluar')) ? args[2] : '';
           const pad = (n) => String(n).padStart(2, '0');
+          const batchItems = pending.filter(item => item.functionName === 'produceBatch' && (!branchFilter || item.args[3] === branchFilter) && (!typeFilter || true));
           const mine = pending
             .filter(item => item.functionName === 'recordStockMovement')
             .filter(item => {
@@ -537,7 +556,21 @@
                 Branch_ID: branchId, Custom_Cost: customCost || '', _pendingSync: true
               };
             });
-          })).then(extra => extra.concat(result || [])); // catatan offline di paling atas
+          })).then(extra => {
+            if (batchItems.length === 0) return extra;
+            // Produksi batch offline: tampilkan baris yang NANTI dicatat server (bahan keluar + hasil masuk).
+            return Promise.all([lookupCachedRecipes(branchFilter || batchItems[0].args[3]), offlineCacheGet('getIngredients:' + JSON.stringify([branchFilter || batchItems[0].args[3]])).catch(() => [])]).then(([recs, ings]) => {
+              const rows = [];
+              batchItems.forEach(item => {
+                const b = expandPendingBatch(item, ings || [], recs);
+                const ref = (item.args[2] || 'Kasir') + ' / PRODUKSI-OFFLINE';
+                const dateStr = item.args[5] || (item.optimistic && item.optimistic.date) || '';
+                b.comps.forEach((c, k) => { if (!typeFilter || typeFilter === 'Keluar') rows.push({ ID: 'MV-PENDING-' + item.id + '-' + k, Date: dateStr, Ingredient_ID: c.id, Type: 'Keluar', Qty: c.qty, Reason: 'Dipakai untuk Produksi Batch', Reference: ref, Branch_ID: item.args[3], _pendingSync: true }); });
+                if (!typeFilter || typeFilter === 'Masuk') rows.push({ ID: 'MV-PENDING-' + item.id + '-out', Date: dateStr, Ingredient_ID: b.outId, Type: 'Masuk', Qty: b.outQty, Reason: 'Hasil Produksi Batch', Reference: ref, Branch_ID: item.args[3], _pendingSync: true });
+              });
+              return rows.concat(extra);
+            });
+          }).then(extra => extra.concat(result || [])); // catatan offline di paling atas
         }
 
         return result;
@@ -658,7 +691,7 @@
           const optimistic = buildOptimisticResult(functionName);
           // Transaksi offline: ikutkan nomor & jam yang SUDAH tercetak di struk, supaya
           // server mencatat persis yang sama (bukan nomor/jam saat sinkron).
-          const queuedArgs = functionName === 'saveTransaction' ? keyedArgs.concat([optimistic.trxId, optimistic.date]) : keyedArgs;
+          const queuedArgs = functionName === 'saveTransaction' ? keyedArgs.concat([optimistic.trxId, optimistic.date]) : (functionName === 'produceBatch' ? keyedArgs.concat([optimistic.date]) : keyedArgs);
           return queueAddWrite({ functionName, args: queuedArgs, optimistic, createdAt: Date.now() }).then(() => {
             console.warn('[Offline] ' + functionName + ' disimpan ke antrian lokal, akan otomatis dikirim begitu online.');
             return Object.assign({}, optimistic, { offlineQueued: true });
@@ -2730,6 +2763,7 @@
               <div className="p-4 space-y-2">
                 <MenuBtn icon="fa-calculator" label="Transaksi" active={activeTab === 'pos'} onClick={() => goTo('pos')} />
                 <MenuBtn icon="fa-clock" label="Absensi" active={activeTab === 'absen'} onClick={() => goTo('absen')} />
+                <MenuBtn icon="fa-store" label="Buka / Tutup Outlet" active={activeTab === 'outlet'} onClick={() => goTo('outlet')} />
                 <MenuBtn icon="fa-receipt" label="Riwayat Transaksi" active={activeTab === 'history'} onClick={() => goTo('history')} />
                 <MenuBtn icon="fa-warehouse" label="Stok" active={activeTab === 'barang-masuk'} onClick={() => goTo('barang-masuk')} />
               </div>
@@ -2755,6 +2789,7 @@
             <div className="flex-1 overflow-hidden">
               {keepAlive('pos', <POSView user={user} branch={branch} settings={settings} />)}
               {keepAlive('absen', <AttendanceView user={user} branch={branch} />)}
+              {keepAlive('outlet', <OutletDayView user={user} branch={branch} />)}
               {keepAlive('history', <HistoryView limitToday={true} cashierName={user.name} settings={settings} branch={branch} />)}
               {keepAlive('barang-masuk', <BarangMasukMenuView user={user} branch={branch} />)}
             </div>
@@ -2786,7 +2821,7 @@
         <div className="h-full" style={{ display: activeTab === tabKey ? 'block' : 'none' }}>{node}</div>
       ) : null;
 
-      const laporanTabs = ['keuangan', 'penjualan'];
+      const laporanTabs = ['keuangan', 'penjualan', 'tutup-outlet'];
       const produkTabs = ['produk-katalog', 'produk-resep', 'kategori'];
       const inventoryTabs = ['inventory-ringkasan', 'inventory-riwayat', 'inventory-produksi', 'inventory-koreksi', 'inventory-laporan'];
       const pegawaiTabs = ['absensi', 'rekap-shift'];
@@ -2825,6 +2860,7 @@
                     <div className="ml-4 space-y-1 mt-1">
                       <MenuBtn icon="fa-file-invoice-dollar" label="Laporan Keuangan" active={activeTab === 'keuangan'} onClick={() => goTo('keuangan')} dark small />
                       <MenuBtn icon="fa-ranking-star" label="Ringkasan Penjualan" active={activeTab === 'penjualan'} onClick={() => goTo('penjualan')} dark small />
+                      <MenuBtn icon="fa-store" label="Riwayat Tutup Outlet" active={activeTab === 'tutup-outlet'} onClick={() => goTo('tutup-outlet')} dark small />
                     </div>
                   )}
                 </div>
@@ -2907,6 +2943,7 @@
             <div className="flex-1 overflow-hidden">
               {keepAlive('laporan', <ReportView branch={branch} allowBranchFilter={false} />)}
               {keepAlive('penjualan', <ReportView branch={branch} allowBranchFilter={false} detailOnly={true} />)}
+              {keepAlive('tutup-outlet', <ClosingsHistoryView branch={branch} canDelete={false} />)}
               {keepAlive('keuangan', <FinancialReportView branch={branch} allowBranchFilter={false} readOnly={true} />)}
               {keepAlive('transaksi', <HistoryView limitToday={false} settings={settings} branch={branch} />)}
               {keepAlive('produk-katalog', <ProductManagerView hideDeleteForAdmin={true} branch={branch} readOnly={true} />)}
@@ -2948,7 +2985,7 @@
         }
       };
 
-      const laporanTabs = ['keuangan', 'penjualan'];
+      const laporanTabs = ['keuangan', 'penjualan', 'tutup-outlet'];
       const produkTabs = ['produk-katalog', 'produk-resep', 'kategori'];
       const inventoryTabs = ['inventory-ringkasan', 'inventory-barang-masuk', 'inventory-catat', 'inventory-produksi', 'inventory-riwayat', 'inventory-laporan'];
       const pegawaiTabs = ['pegawai', 'absensi'];
@@ -3009,6 +3046,7 @@
                     <div className="ml-4 space-y-1 mt-1">
                       <MenuBtn icon="fa-file-invoice-dollar" label="Laporan Keuangan" active={activeTab === 'keuangan'} onClick={() => goTo('keuangan')} dark small />
                       <MenuBtn icon="fa-ranking-star" label="Ringkasan Penjualan" active={activeTab === 'penjualan'} onClick={() => goTo('penjualan')} dark small />
+                      <MenuBtn icon="fa-store" label="Riwayat Tutup Outlet" active={activeTab === 'tutup-outlet'} onClick={() => goTo('tutup-outlet')} dark small />
                     </div>
                   )}
                 </div>
@@ -3100,6 +3138,7 @@
             <div className="flex-1 overflow-hidden">
               {keepAlive('laporan', <ReportView branch={branch} allowBranchFilter={true} />)}
               {keepAlive('penjualan', <ReportView branch={branch} allowBranchFilter={true} detailOnly={true} />)}
+              {keepAlive('tutup-outlet', <ClosingsHistoryView branch={branch} canDelete={true} />)}
               {keepAlive('keuangan', <FinancialReportView branch={branch} allowBranchFilter={true} />)}
               {keepAlive('kategori', <CategoryManagerView />)}
               {keepAlive('produk-katalog', <ProductManagerView branch={branch} />)}
@@ -5674,7 +5713,11 @@
             const res = await runGoogleScript('produceBatch', outputId, batchNum, eff.name || 'Owner', branchId);
             if (res.success) {
               invalidateCache('ingredients_' + branchId);
-              notify.alert(`Produksi berhasil! Stok "${selectedOutput.Name}" sekarang: ${Number(res.newStock).toLocaleString('id-ID', { maximumFractionDigits: 2 })} ${res.unit}`, "Berhasil Diproduksi", "success");
+              if (res.offlineQueued) {
+                notify.alert(`Tersimpan offline. Produksi ${fmtYield(totalYield)} "${selectedOutput.Name}" akan dikirim otomatis begitu internet kembali, lalu stok diperbarui.`, "Tersimpan Offline", "success");
+              } else {
+                notify.alert(`Produksi berhasil! Stok "${selectedOutput.Name}" sekarang: ${Number(res.newStock).toLocaleString('id-ID', { maximumFractionDigits: 2 })} ${res.unit}`, "Berhasil Diproduksi", "success");
+              }
               setBatches(1);
               loadData(true);
               if (onDone) onDone();
@@ -6212,7 +6255,7 @@
     function OutletStockReportView({ branch }) {
       const branchId = branch ? branch.ID : 'BR001';
       const [ingredients, setIngredients] = useState([]);
-      const [pending, setPending] = useState({ movements: [], salesCount: 0 });
+      const [pending, setPending] = useState({ movements: [], salesCount: 0, batchDelta: {}, batchCount: 0 });
       const [loading, setLoading] = useState(true);
       const [refreshing, setRefreshing] = useState(false);
       const [loadError, setLoadError] = useState(false);
@@ -6225,10 +6268,19 @@
       const loadPending = () => {
         queueGetAllWrites().then(list => {
           const active = list.filter(i => !i.failed);
-          setPending({
+          const batches = active.filter(i => i.functionName === 'produceBatch' && i.args[3] === branchId);
+          const setIt = (batchDelta) => setPending({
             movements: active.filter(i => i.functionName === 'recordStockMovement' && i.args[6] === branchId),
-            salesCount: active.filter(i => i.functionName === 'saveTransaction' && i.args[8] === branchId).length
+            salesCount: active.filter(i => i.functionName === 'saveTransaction' && i.args[8] === branchId).length,
+            batchDelta, batchCount: batches.length
           });
+          if (batches.length === 0) { setIt({}); return; }
+          // Produksi batch yang masih antri: bahan mentah berkurang, hasil olahan bertambah.
+          Promise.all([lookupCachedRecipes(branchId), offlineCacheGet('getIngredients:' + JSON.stringify([branchId])).catch(() => [])]).then(([recs, ings]) => {
+            const d = {};
+            batches.forEach(it => { const b = expandPendingBatch(it, ings || [], recs); b.comps.forEach(c => { d[c.id] = (d[c.id] || 0) - c.qty; }); d[b.outId] = (d[b.outId] || 0) + b.outQty; });
+            setIt(d);
+          }).catch(() => setIt({}));
         }).catch(() => {});
       };
 
@@ -6272,7 +6324,7 @@
         deltaMap[item.args[0]] = (deltaMap[item.args[0]] || 0) + convertPendingMovement(item, ing).signed;
       });
       const rows = ingredients.map(ing => {
-        const delta = deltaMap[ing.ID] || 0;
+        const delta = (deltaMap[ing.ID] || 0) + ((pending.batchDelta || {})[ing.ID] || 0);
         const stock = Math.round(((effStock(ing) || 0) + delta) * 10000) / 10000;
         const min = Number(ing.Min_Stock) || 0;
         const conv = Number(ing.Purchase_Conversion) || 0;
@@ -6317,6 +6369,11 @@
           {pending.movements.length > 0 && (
             <div className="mb-3 bg-amber-50 text-amber-700 text-xs font-semibold px-3 py-2 rounded-lg flex-shrink-0">
               <i className="fa-solid fa-clock-rotate-left mr-1.5"></i>Sudah termasuk {pending.movements.length} catatan barang masuk/keluar yang belum sinkron.
+            </div>
+          )}
+          {pending.batchCount > 0 && (
+            <div className="mb-3 bg-amber-50 text-amber-700 text-xs font-semibold px-3 py-2 rounded-lg flex-shrink-0">
+              <i className="fa-solid fa-clock-rotate-left mr-1.5"></i>Sudah termasuk {pending.batchCount} produksi batch (masak) yang belum sinkron.
             </div>
           )}
           {pending.salesCount > 0 && (
@@ -7704,6 +7761,293 @@
               ? <select value={eff.active.Username} onChange={e => eff.setPicked(e.target.value)} className="font-bold bg-transparent outline-none">{eff.onShift.map(x => <option key={x.Username} value={x.Username}>{x.Name}</option>)}</select>
               : <b>{eff.active.Name}</b>}</span>
           ) : <span>Belum ada pegawai yang absen masuk, catatan akan tertulis atas nama akun outlet. Absen dulu di menu Absensi.</span>}
+        </div>
+      );
+    }
+
+    // ==========================================
+    // BUKA / TUTUP OUTLET — layar karyawan. Server menghitung ulang rekap hari ini sendiri;
+    // selisih uang laci langsung ditampilkan ke karyawan saat itu juga.
+    // ==========================================
+    const rpFmt = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
+    const digitsOnly = (v) => String(v || '').replace(/\D/g, '');
+
+    function DiffBadge({ diff, big }) {
+      const d = Math.round(Number(diff) || 0);
+      const cfg = d === 0 ? { bg: '#ecfdf5', fg: '#047857', t: 'Uang pas ✓' }
+        : d > 0 ? { bg: '#fffbeb', fg: '#b45309', t: 'Lebih ' + rpFmt(d) }
+        : { bg: '#fef2f2', fg: '#dc2626', t: 'Kurang ' + rpFmt(-d) };
+      return <span style={{ background: cfg.bg, color: cfg.fg, fontWeight: 800, borderRadius: 12, padding: big ? '10px 16px' : '3px 10px', fontSize: big ? 22 : 12, display: 'inline-block' }}>{cfg.t}</span>;
+    }
+
+    function OutletDayView({ user, branch }) {
+      const notify = useNotification();
+      const eff = useEffectiveStaff(user, branch);
+      const branchId = branch ? branch.ID : 'BR001';
+      const [st, setSt] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [cash, setCash] = useState('');
+      const [note, setNote] = useState('');
+      const [counted, setCounted] = useState('');
+      const [deposit, setDeposit] = useState('');
+      const [notes, setNotes] = useState('');
+      const [dItems, setDItems] = useState([]); // pengeluaran dari laci: [{type:'air'|'gas'|'lain', amount, note}]
+      const [busy, setBusy] = useState(false);
+      const [cashTouched, setCashTouched] = useState(false);
+
+      const load = (skip) => swrFetch('outday:' + branchId + ':' + attDayKey(), () => runGoogleScript('getOutletDayStatus', branchId), (d) => { setSt(d); setLoading(false); }, () => setLoading(false), skip);
+      useEffect(() => { load(); }, []);
+      useEffect(() => { if (st && !st.record && !cashTouched && st.suggestedOpeningCash) setCash(String(st.suggestedOpeningCash)); }, [st]);
+
+      const rec = st && st.record;
+      const opened = !!(rec && rec.Opened_At);
+      const closed = !!(rec && rec.Closed);
+      const sum = (st && st.summary) || { count: 0, total: 0, cash: 0, qris: 0, byMethod: {} };
+
+      const doOpen = async () => {
+        if (cash === '') { notify.alert('Isi kas awal dulu (hitung uang di laci). Kalau kosong isi 0.', 'Kas Awal Belum Diisi', 'error'); return; }
+        setBusy(true);
+        try {
+          const res = await runGoogleScript('openOutlet', branchId, eff.name, Number(cash), note, newRequestId());
+          if (res && res.success) { notify.alert('Outlet dibuka atas nama ' + eff.name + '. Kas awal ' + rpFmt(cash) + ' tercatat.', 'Outlet Dibuka', 'success'); load(true); }
+          else { notify.alert((res && res.message) || 'Gagal mencatat.', 'Gagal', 'error'); load(true); }
+        } catch (e) { notify.alert('Buka outlet butuh koneksi internet. Coba lagi saat online.', 'Tidak Ada Internet', 'error'); }
+        setBusy(false);
+      };
+
+      const doClose = async () => {
+        if (counted === '') { notify.alert('Hitung uang di laci lalu isi jumlahnya.', 'Uang Fisik Belum Diisi', 'error'); return; }
+        if (Number(deposit || 0) > Number(counted)) { notify.alert('Setoran tidak boleh lebih besar dari uang yang dihitung.', 'Setoran Tidak Valid', 'error'); return; }
+        try {
+          const q = await queueGetAllWrites();
+          const pend = (q || []).filter(it => it.functionName === 'saveTransaction').length;
+          if (pend > 0) { notify.alert(pend + ' transaksi masih belum terkirim ke server (offline). Tunggu sampai terkirim dulu supaya rekap hari ini lengkap, lalu tutup outlet.', 'Transaksi Belum Terkirim', 'error'); return; }
+        } catch (e) {}
+        notify.confirm('Tutup outlet sekarang?\nUang fisik ' + rpFmt(counted) + (dex > 0 ? ', dipakai belanja dari laci ' + rpFmt(dex) : '') + ', setoran ' + rpFmt(deposit || 0) + '. Setelah ditutup tidak bisa diubah.', async () => {
+          setBusy(true);
+          try {
+            const res = await runGoogleScript('closeOutlet', branchId, eff.name, Number(counted), Number(deposit || 0), notes, dItems.map(it => ({ type: it.type, note: it.note, amount: Number(it.amount) || 0 })), newRequestId());
+            if (res && res.success) {
+              const d = Math.round(res.difference);
+              notify.alert(d === 0 ? 'Uang di laci PAS. Outlet ditutup.' : (d > 0 ? 'Uang LEBIH ' + rpFmt(d) : 'Uang KURANG ' + rpFmt(-d) + '. Hitung ulang uang di laci kalau belum yakin.') + '\nSisa di laci untuk besok: ' + rpFmt(res.nextOpeningCash), d === 0 ? 'Outlet Ditutup' : 'Selisih Kas', d === 0 ? 'success' : 'warning');
+              load(true);
+            } else { notify.alert((res && res.message) || 'Gagal menutup outlet.', 'Gagal', 'error'); load(true); }
+          } catch (e) { notify.alert('Tutup outlet butuh koneksi internet. Coba lagi saat online.', 'Tidak Ada Internet', 'error'); }
+          setBusy(false);
+        });
+      };
+
+      const card = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, padding: 16, marginBottom: 14 };
+      const lbl = { fontSize: 12, fontWeight: 700, color: '#4b5563', display: 'block', marginBottom: 4 };
+      const inp = { width: '100%', padding: '12px 14px', border: '1px solid #d1d5db', borderRadius: 12, fontSize: 20, fontWeight: 800, outline: 'none' };
+      const dex = dItems.reduce((a, it) => a + (Number(it.amount) || 0), 0);
+      const expectedLive = (opened ? Number(rec.Opening_Cash) : 0) + Number(sum.cash || 0) - dex;
+      const addItem = (type) => setDItems(list => [...list, { type, amount: '', note: '' }]);
+      const setItem = (i, patch) => setDItems(list => list.map((it, k) => k === i ? { ...it, ...patch } : it));
+      const liveDiff = counted === '' ? null : Number(counted) - expectedLive;
+
+      return (
+        <div className="h-full overflow-y-auto">
+          <RecorderTag user={user} branch={branch} />
+          <div className="p-4 sm:p-6 max-w-lg mx-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-800">Buka / Tutup Outlet</h2>
+                <p className="text-xs text-gray-400">{st ? st.date : ''} · {branch ? branch.Name : ''}</p>
+              </div>
+              <button onClick={() => load(true)} className="text-gray-400 w-9 h-9" title="Muat ulang"><i className="fa-solid fa-arrow-rotate-right"></i></button>
+            </div>
+
+            {loading && !st && <p className="text-center text-gray-400 py-10"><i className="fa-solid fa-spinner fa-spin mr-2"></i>Memuat...</p>}
+
+            {st && (
+              <>
+                {/* STATUS */}
+                <div style={{ ...card, background: closed ? '#f1f5f9' : opened ? '#ecfdf5' : '#fffbeb' }}>
+                  {closed ? <p className="text-sm font-bold text-gray-700"><i className="fa-solid fa-lock mr-2"></i>Outlet sudah ditutup oleh {rec.Closed_By} · {String(rec.Closed_At).substring(11)}</p>
+                    : opened ? <p className="text-sm font-bold" style={{ color: '#047857' }}><i className="fa-solid fa-door-open mr-2"></i>Dibuka oleh {rec.Opened_By} · {String(rec.Opened_At).substring(11)} · Kas awal {rpFmt(rec.Opening_Cash)}</p>
+                    : <p className="text-sm font-bold" style={{ color: '#b45309' }}><i className="fa-solid fa-door-closed mr-2"></i>Outlet belum dibuka hari ini</p>}
+                </div>
+
+                {/* BUKA OUTLET */}
+                {!opened && !closed && (
+                  <div style={card}>
+                    <h3 className="font-bold text-gray-800 mb-3">Buka Outlet</h3>
+                    <label style={lbl}>Kas awal di laci (hitung uangnya)</label>
+                    <input type="text" inputMode="numeric" value={cash} onChange={e => { setCash(digitsOnly(e.target.value)); setCashTouched(true); }} placeholder="0" style={inp} />
+                    <p className="text-sm font-bold text-indigo-600 mt-1">{cash !== '' ? rpFmt(cash) : ''}</p>
+                    {st.suggestedOpeningCash > 0 && <p className="text-[11px] text-gray-400 mt-1">Kemarin ditinggal {rpFmt(st.suggestedOpeningCash)} di laci. Sesuaikan kalau hitungan Anda berbeda.</p>}
+                    <label style={{ ...lbl, marginTop: 12 }}>Catatan (opsional)</label>
+                    <input type="text" value={note} onChange={e => setNote(e.target.value)} placeholder="Misal: mesin es sudah nyala" className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none" />
+                    <button disabled={busy} onClick={doOpen} className="w-full mt-4 bg-emerald-500 disabled:bg-gray-300 text-white font-bold py-3.5 rounded-xl">{busy ? 'Menyimpan...' : 'Buka Outlet'}</button>
+                  </div>
+                )}
+
+                {/* STOK MENIPIS */}
+                {!closed && st.lowStock && st.lowStock.length > 0 && (
+                  <div style={card}>
+                    <h3 className="font-bold text-gray-800 mb-2"><i className="fa-solid fa-triangle-exclamation mr-2" style={{ color: '#d97706' }}></i>Stok Menipis</h3>
+                    {st.lowStock.map((b, i) => <div key={i} className="flex justify-between text-sm py-1"><span className="text-gray-700">{b.name}</span><span className="font-bold" style={{ color: '#dc2626' }}>{b.stock} {b.unit} <span className="text-gray-400 font-normal">(min {b.min})</span></span></div>)}
+                  </div>
+                )}
+
+                {/* REKAP HARI INI */}
+                {(opened || closed) && (
+                  <div style={card}>
+                    <h3 className="font-bold text-gray-800 mb-3">Rekap Hari Ini</h3>
+                    {(() => {
+                      const r = closed ? { count: rec.Trx_Count, total: rec.Total_Sales, cash: rec.Cash_Sales, qris: rec.Qris_Sales } : sum;
+                      const row = (a, b, bold) => <div className="flex justify-between text-sm py-1.5 border-b border-gray-50"><span className="text-gray-600">{a}</span><span className={bold ? 'font-bold text-gray-900' : 'font-semibold text-gray-700'}>{b}</span></div>;
+                      return (<>
+                        {row('Jumlah transaksi', r.count)}
+                        {row('Total penjualan', rpFmt(r.total), true)}
+                        {row('Tunai', rpFmt(r.cash))}
+                        {row('QRIS', rpFmt(r.qris))}
+                        {row('Kas awal', rpFmt(rec.Opening_Cash))}
+                        {closed && rec.Drawer_Expense > 0 && row('Diambil dari laci' + (rec.Drawer_Note ? ' (' + rec.Drawer_Note + ')' : ''), '− ' + rpFmt(rec.Drawer_Expense))}
+                        {row('Uang tunai seharusnya di laci', rpFmt(closed ? rec.Expected_Cash : expectedLive), true)}
+                      </>);
+                    })()}
+                    {!closed && sum.voided > 0 && <p className="text-[11px] text-gray-400 mt-2">{sum.voided} transaksi dibatalkan tidak dihitung.</p>}
+                  </div>
+                )}
+
+                {/* STOK TERBUANG */}
+                {(opened || closed) && st.waste && st.waste.length > 0 && (
+                  <div style={card}>
+                    <h3 className="font-bold text-gray-800 mb-2">Stok Terbuang Hari Ini</h3>
+                    {st.waste.map((b, i) => <div key={i} className="flex justify-between text-sm py-1"><span className="text-gray-700">{b.name}</span><span className="font-semibold text-gray-700">{b.qty} {b.unit}</span></div>)}
+                  </div>
+                )}
+
+                {/* TUTUP OUTLET */}
+                {opened && !closed && (
+                  <div style={card}>
+                    <h3 className="font-bold text-gray-800 mb-3">Tutup Outlet</h3>
+                    <label style={lbl}>Uang laci yang dipakai belanja hari ini (jika ada)</label>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {[['air', 'Beli Air', 'fa-droplet'], ['gas', 'Beli Gas LPG 3kg', 'fa-fire-flame-simple'], ['lain', 'Lainnya', 'fa-plus']].map(([t, l, ic]) => (
+                        <button key={t} type="button" onClick={() => addItem(t)} style={{ border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca', fontWeight: 700, fontSize: 12, borderRadius: 10, padding: '8px 12px' }}><i className={'fa-solid ' + ic + ' mr-1'}></i>{l}</button>
+                      ))}
+                    </div>
+                    {dItems.map((it, i) => (
+                      <div key={i} style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 12, padding: 10, marginBottom: 8 }}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-bold text-gray-700">{it.type === 'air' ? 'Beli Air' : it.type === 'gas' ? 'Beli Gas LPG 3kg' : 'Pengeluaran lain'}</span>
+                          <button type="button" onClick={() => setDItems(list => list.filter((_, k) => k !== i))} className="text-red-400 w-7 h-7" title="Hapus baris"><i className="fa-solid fa-xmark"></i></button>
+                        </div>
+                        <input type="text" inputMode="numeric" value={it.amount} onChange={e => setItem(i, { amount: digitsOnly(e.target.value) })} placeholder="Jumlah (Rp)" style={{ ...inp, fontSize: 16 }} />
+                        {it.amount !== '' && <p className="text-[11px] font-bold text-indigo-600 mt-1">{rpFmt(it.amount)}</p>}
+                        {(it.type === 'lain' || it.note) && <input type="text" value={it.note} onChange={e => setItem(i, { note: e.target.value })} placeholder={it.type === 'lain' ? 'Untuk apa? Misal: beli es batu' : 'Catatan (opsional)'} className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none mt-2" />}
+                      </div>
+                    ))}
+                    <p className="text-[11px] text-gray-400 mb-3">{dex > 0 ? 'Total dipakai dari laci: ' + rpFmt(dex) + '. ' : ''}Dikurangkan dari uang seharusnya di laci dan otomatis tercatat di Biaya Operasional (Air, Gas LPG, Lainnya). Jangan dicatat dobel.</p>
+                    <label style={lbl}>Uang fisik di laci (hitung dulu)</label>
+                    <input type="text" inputMode="numeric" value={counted} onChange={e => setCounted(digitsOnly(e.target.value))} placeholder="0" style={inp} />
+                    {liveDiff !== null && (
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-xs text-gray-500">Seharusnya {rpFmt(expectedLive)}</span>
+                        <DiffBadge diff={liveDiff} />
+                      </div>
+                    )}
+                    <label style={{ ...lbl, marginTop: 12 }}>Disetor ke pemilik</label>
+                    <input type="text" inputMode="numeric" value={deposit} onChange={e => setDeposit(digitsOnly(e.target.value))} placeholder="0" style={{ ...inp, fontSize: 16 }} />
+                    {counted !== '' && <p className="text-[11px] text-gray-500 mt-1">Sisa di laci untuk besok: <b>{rpFmt(Math.max(0, Number(counted) - Number(deposit || 0)))}</b></p>}
+                    <label style={{ ...lbl, marginTop: 12 }}>Catatan (opsional)</label>
+                    <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Misal: 2 gelas tumpah, mesin es rewel" className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none" />
+                    <button disabled={busy} onClick={doClose} className="w-full mt-4 bg-rose-500 disabled:bg-gray-300 text-white font-bold py-3.5 rounded-xl">{busy ? 'Menyimpan...' : 'Tutup Outlet'}</button>
+                    <p className="text-[10px] text-gray-400 text-center mt-2">Rekap dihitung ulang oleh server saat outlet ditutup.</p>
+                  </div>
+                )}
+
+                {/* HASIL TUTUP */}
+                {closed && (
+                  <div style={card}>
+                    <h3 className="font-bold text-gray-800 mb-3">Hasil Tutup Outlet</h3>
+                    <div className="text-center mb-3"><DiffBadge diff={rec.Difference} big /></div>
+                    <div className="flex justify-between text-sm py-1.5 border-b border-gray-50"><span className="text-gray-600">Uang fisik dihitung</span><span className="font-bold">{rpFmt(rec.Counted_Cash)}</span></div>
+                    <div className="flex justify-between text-sm py-1.5 border-b border-gray-50"><span className="text-gray-600">Disetor</span><span className="font-bold">{rpFmt(rec.Deposit)}</span></div>
+                    <div className="flex justify-between text-sm py-1.5"><span className="text-gray-600">Sisa di laci untuk besok</span><span className="font-bold">{rpFmt(rec.Next_Opening_Cash)}</span></div>
+                    {rec.Notes && <p className="text-xs text-gray-500 mt-2">Catatan: {rec.Notes}</p>}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // Untuk Owner / Rekan Bisnis: riwayat tutup outlet + selisih kas.
+    function ClosingsHistoryView({ branch, canDelete }) {
+      const notify = useNotification();
+      const branchId = branch ? branch.ID : undefined;
+      const now = new Date();
+      const [month, setMonth] = useState(now.getMonth() + 1);
+      const [year, setYear] = useState(now.getFullYear());
+      const [rows, setRows] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const key = 'closings:' + (branchId || 'ALL') + ':' + year + '-' + month;
+      const load = (skip) => { setLoading(true); return swrFetch(key, () => runGoogleScript('getOutletClosings', branchId, month, year), (d) => { setRows(d || []); setLoading(false); }, () => setLoading(false), skip); };
+      useEffect(() => { load(); }, [month, year, branchId]);
+      const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+      const totalDiff = rows.filter(r => r.Closed).reduce((a, r) => a + Number(r.Difference || 0), 0);
+      const nSelisih = rows.filter(r => r.Closed && Math.round(r.Difference) !== 0).length;
+      const del = (r) => notify.confirm('Hapus catatan outlet tanggal ' + r.Date + '?\nPegawai bisa membuka/menutup outlet hari itu lagi.', async () => {
+        try { const res = await runGoogleScript('deleteOutletClosing', r.ID); if (res && res.success) load(true); else notify.alert((res && res.message) || 'Gagal.', 'Gagal', 'error'); }
+        catch (e) { notify.alert('Butuh koneksi internet.', 'Gagal', 'error'); }
+      });
+      return (
+        <div className="h-full overflow-y-auto p-4 sm:p-6">
+          <div className="max-w-3xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-800">Riwayat Tutup Outlet</h2>
+                <p className="text-gray-500 text-sm mt-1">Kas awal, uang seharusnya vs uang fisik, dan setoran dari karyawan tiap hari.</p>
+              </div>
+              <div className="flex gap-2">
+                <select value={month} onChange={e => setMonth(Number(e.target.value))} className="px-3 py-2 border rounded-lg text-sm bg-white">{monthNames.map((n, i) => <option key={i} value={i + 1}>{n}</option>)}</select>
+                <select value={year} onChange={e => setYear(Number(e.target.value))} className="px-3 py-2 border rounded-lg text-sm bg-white">{[now.getFullYear() - 1, now.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}</select>
+                <button onClick={() => load(true)} className="bg-white border w-10 rounded-lg text-gray-500" title="Muat ulang"><i className="fa-solid fa-arrow-rotate-right"></i></button>
+              </div>
+            </div>
+            {rows.some(r => r.Closed) && (
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-white border rounded-xl p-3"><p className="text-[11px] text-gray-400 font-bold uppercase">Hari dengan selisih</p><p className="text-xl font-bold text-gray-800">{nSelisih} <span className="text-xs text-gray-400 font-normal">dari {rows.filter(r => r.Closed).length} hari</span></p></div>
+                <div className="bg-white border rounded-xl p-3"><p className="text-[11px] text-gray-400 font-bold uppercase">Total selisih bulan ini</p><div className="mt-1"><DiffBadge diff={totalDiff} /></div></div>
+              </div>
+            )}
+            {loading && rows.length === 0 ? <p className="text-center text-gray-400 py-10"><i className="fa-solid fa-spinner fa-spin"></i></p>
+              : rows.length === 0 ? <p className="text-center text-gray-400 py-10">Belum ada catatan buka/tutup outlet pada bulan ini.</p>
+              : (
+                <div className="space-y-3">
+                  {rows.map(r => (
+                    <div key={r.ID} className="bg-white border rounded-2xl p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="font-bold text-gray-800">{r.Date}{r.Branch_ID && <span className="text-xs text-gray-400 font-normal ml-2">{r.Branch_ID}</span>}</p>
+                          <p className="text-[11px] text-gray-400">Dibuka: {r.Opened_By || '—'}{r.Opened_At ? ' · ' + String(r.Opened_At).substring(11) : ''} · Ditutup: {r.Closed ? (r.Closed_By + ' · ' + String(r.Closed_At).substring(11)) : 'belum'}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {r.Closed ? <DiffBadge diff={r.Difference} /> : <span className="text-xs font-bold px-2 py-1 rounded-lg" style={{ background: '#fffbeb', color: '#b45309' }}>Belum ditutup</span>}
+                          {canDelete && <button onClick={() => del(r)} title="Hapus catatan" className="text-red-400 w-7 h-7"><i className="fa-solid fa-trash-can text-xs"></i></button>}
+                        </div>
+                      </div>
+                      {r.Closed && (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-xs">
+                          {[['Kas awal', r.Opening_Cash], ['Penjualan tunai', r.Cash_Sales], ...(r.Drawer_Expense > 0 ? [['Diambil dari laci', r.Drawer_Expense]] : []), ['Seharusnya', r.Expected_Cash], ['Uang fisik', r.Counted_Cash], ['Total penjualan', r.Total_Sales], ['QRIS', r.Qris_Sales], ['Disetor', r.Deposit], ['Sisa untuk besok', r.Next_Opening_Cash]].map(([a, b]) => (
+                            <div key={a} className="bg-slate-50 rounded-lg px-2.5 py-2"><p className="text-gray-400">{a}</p><p className="font-bold text-gray-800">{rpFmt(b)}</p></div>
+                          ))}
+                        </div>
+                      )}
+                      {r.Notes && <p className="text-xs text-gray-500 mt-2">Catatan tutup: {r.Notes}</p>}
+                      {r.Drawer_Expense > 0 && r.Drawer_Note && <p className="text-xs text-gray-500 mt-1">Uang laci dipakai untuk: {r.Drawer_Note}</p>}
+                      {r.Opening_Note && <p className="text-xs text-gray-400 mt-1">Catatan buka: {r.Opening_Note}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+          </div>
         </div>
       );
     }
