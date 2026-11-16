@@ -2810,7 +2810,7 @@
               <div className="p-4 space-y-2">
                 <MenuBtn icon="fa-calculator" label="Transaksi" active={activeTab === 'pos'} onClick={() => goTo('pos')} />
                 <MenuBtn icon="fa-clock" label="Absensi" active={activeTab === 'absen'} onClick={() => goTo('absen')} />
-                <MenuBtn icon="fa-store" label="Buka / Tutup Outlet" active={activeTab === 'outlet'} onClick={() => goTo('outlet')} />
+                <MenuBtn icon="fa-store" label="Buka & Tutup Kasir" active={activeTab === 'outlet'} onClick={() => goTo('outlet')} />
                 <MenuBtn icon="fa-receipt" label="Riwayat Transaksi" active={activeTab === 'history'} onClick={() => goTo('history')} />
                 <MenuBtn icon="fa-warehouse" label="Stok" active={activeTab === 'barang-masuk'} onClick={() => goTo('barang-masuk')} />
               </div>
@@ -7954,7 +7954,7 @@
           <div className="p-4 sm:p-6 max-w-lg mx-auto">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-xl font-bold text-gray-800">Buka / Tutup Outlet</h2>
+                <h2 className="text-xl font-bold text-gray-800">Buka &amp; Tutup Kasir</h2>
                 <p className="text-xs text-gray-400">{st ? st.date : ''} · {branch ? branch.Name : ''}</p>
               </div>
               <button onClick={() => load(true)} className="text-gray-400 w-9 h-9" title="Muat ulang"><i className="fa-solid fa-arrow-rotate-right"></i></button>
