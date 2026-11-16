@@ -7949,16 +7949,20 @@
       const liveDiff = counted === '' ? null : Number(counted) - expectedLive;
 
       return (
-        <div className="h-full overflow-y-auto">
-          <RecorderTag user={user} branch={branch} />
-          <div className="p-4 sm:p-6 max-w-lg mx-auto">
-            <div className="flex items-center justify-between mb-4">
+        <div className="h-full flex flex-col">
+          <div className="flex-shrink-0"><RecorderTag user={user} branch={branch} /></div>
+          {/* Batang judul: tetap di atas, tidak ikut bergeser saat isi halaman digulir */}
+          <div className="flex-shrink-0" style={{ background: '#fff', borderBottom: '1px solid #e5e7eb' }}>
+            <div className="max-w-lg mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold text-gray-800">Buka &amp; Tutup Kasir</h2>
                 <p className="text-xs text-gray-400">{st ? st.date : ''} · {branch ? branch.Name : ''}</p>
               </div>
               <button onClick={() => load(true)} className="text-gray-400 w-9 h-9" title="Muat ulang"><i className="fa-solid fa-arrow-rotate-right"></i></button>
             </div>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="p-4 sm:p-6 max-w-lg mx-auto">
 
             {loading && !st && <p className="text-center text-gray-400 py-10"><i className="fa-solid fa-spinner fa-spin mr-2"></i>Memuat...</p>}
 
@@ -8080,6 +8084,7 @@
                 )}
               </>
             )}
+          </div>
           </div>
         </div>
       );
