@@ -10541,6 +10541,7 @@
     // Kunci penyimpanan keranjang sementara di browser, supaya kalau halaman
     // tidak sengaja ter-refresh, pesanan yang sedang diproses kasir tidak hilang.
     const CART_STORAGE_KEY = 'qasir_minumes_active_cart';
+    const HELD_STORAGE_KEY = 'qasir_minumes_held_orders'; // + ':' + ID cabang
 
     function POSView({ user, branch, settings }) {
       const eff = useEffectiveStaff(user, branch);
@@ -10598,7 +10599,20 @@
       const [sendingReceipt, setSendingReceipt] = useState(false);
       const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
       const [searchQuery, setSearchQuery] = useState('');
-      const [heldOrders, setHeldOrders] = useState([]);
+      // Pesanan Tertahan disimpan di perangkat: tidak hilang walau aplikasi ter-refresh / ditutup.
+      const heldKey = HELD_STORAGE_KEY + ':' + (branch ? branch.ID : 'BR001');
+      const [heldOrders, setHeldOrders] = useState(() => {
+        try {
+          const saved = JSON.parse(localStorage.getItem(heldKey) || '[]');
+          return Array.isArray(saved) ? saved : [];
+        } catch (e) { return []; }
+      });
+      useEffect(() => {
+        try {
+          if (heldOrders.length > 0) localStorage.setItem(heldKey, JSON.stringify(heldOrders));
+          else localStorage.removeItem(heldKey);
+        } catch (e) { /* penyimpanan penuh / tidak tersedia, abaikan */ }
+      }, [heldOrders]);
       const [heldOrdersModalOpen, setHeldOrdersModalOpen] = useState(false);
       const notify = useNotification();
 
@@ -10715,7 +10729,9 @@
 
       const handleHoldOrder = () => {
         if (cart.length === 0) return;
-        const label = 'Pesanan ' + (heldOrders.length + 1);
+        // Nomor berikutnya = nomor terbesar yang ada + 1 (supaya tidak kembar setelah ada yang dilanjutkan).
+        const maxNo = heldOrders.reduce((m, o) => { const n = parseInt(String(o.label).replace(/\D/g, ''), 10); return n > m ? n : m; }, 0);
+        const label = 'Pesanan ' + (Math.max(maxNo, heldOrders.length) + 1);
         setHeldOrders(prev => [...prev, { id: Date.now(), label, items: cart, total: cart.reduce((s, i) => s + (i.Price * i.qty) - (i.Discount || 0), 0) }]);
         setCart([]);
         setCartDrawerOpen(false);
