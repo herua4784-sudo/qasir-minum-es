@@ -8174,15 +8174,19 @@
       const nSelisih = rows.filter(r => r.Closed && Math.round(r.Difference) !== 0).length;
       // Koreksi salah ketik (khusus Owner): ubah Uang fisik, Disetor, Catatan.
       const [edit, setEdit] = useState(null); // { r, counted, deposit, notes, busy }
-      const openEdit = (r) => setEdit({ r, counted: String(Math.round(Number(r.Counted_Cash) || 0)), deposit: String(Math.round(Number(r.Deposit) || 0)), notes: String(r.Notes || '').replace(/\s*\[Dikoreksi[^\]]*\]/g, '').trim(), busy: false });
+      const toIso = (d) => { const m = String(d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : ''; };
+      const fromIso = (d) => { const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; };
+      const todayIso = (() => { const n = new Date(); return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0'); })();
+      const openEdit = (r) => setEdit({ r, date: toIso(r.Date), counted: String(Math.round(Number(r.Counted_Cash) || 0)), deposit: String(Math.round(Number(r.Deposit) || 0)), notes: String(r.Notes || '').replace(/\s*\[Dikoreksi[^\]]*\]/g, '').trim(), busy: false });
       const saveEdit = async (ok) => {
         if (!edit) return;
         if (edit.counted === '') { notify.alert('Isi uang fisik.', 'Belum Diisi', 'error'); return; }
         if (Number(edit.deposit || 0) > Number(edit.counted)) { notify.alert('Setoran tidak boleh lebih besar dari uang fisik.', 'Tidak Valid', 'error'); return; }
         if (ok !== true) { const w = smallWarn([['Uang fisik', edit.counted, 10000], ['Disetor', edit.deposit, 10000]]); if (w) { notify.confirm(w, () => saveEdit(true)); return; } }
+        if (!edit.date) { notify.alert('Isi tanggal.', 'Belum Diisi', 'error'); return; }
         setEdit(e => ({ ...e, busy: true }));
         try {
-          const res = await runGoogleScript('editOutletClosing', edit.r.ID, Number(edit.counted), Number(edit.deposit || 0), edit.notes, editor || 'Owner');
+          const res = await runGoogleScript('editOutletClosing', edit.r.ID, Number(edit.counted), Number(edit.deposit || 0), edit.notes, editor || 'Owner', fromIso(edit.date));
           if (res && res.success) { setEdit(null); load(true); notify.alert('Data tutup outlet dikoreksi. Selisih dihitung ulang.', 'Tersimpan', 'success'); }
           else { setEdit(e => ({ ...e, busy: false })); notify.alert((res && res.message) || 'Gagal menyimpan.', 'Gagal', 'error'); }
         } catch (e) { setEdit(x => ({ ...x, busy: false })); notify.alert('Butuh koneksi internet.', 'Gagal', 'error'); }
@@ -8245,20 +8249,24 @@
           </div>
           {edit && (() => {
             const exp = Number(edit.r.Expected_Cash) || 0, c = Number(edit.counted || 0), d = Number(edit.deposit || 0);
+            const dateMoved = !!edit.date && edit.date !== toIso(edit.r.Date);
             const inp2 = { width: '100%', padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 12, fontSize: 16, fontWeight: 700 };
             return (
               <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
                 <div style={{ background: '#fff', borderRadius: 16, padding: 18, width: '100%', maxWidth: 420, maxHeight: '90vh', overflowY: 'auto' }}>
-                  <h3 className="font-bold text-gray-800">Koreksi Tutup Outlet · {edit.r.Date}</h3>
-                  <p className="text-xs text-gray-500 mt-1 mb-3">Hanya uang fisik, setoran, dan catatan yang bisa dikoreksi. Kas awal, penjualan, dan belanja laci tetap.</p>
-                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-xs mb-3 flex justify-between"><span className="text-gray-500">Uang seharusnya</span><b>{rpFmt(exp)}</b></div>
+                  <h3 className="font-bold text-gray-800">Koreksi Tutup Outlet</h3>
+                  <p className="text-xs text-gray-500 mt-1 mb-3">Yang bisa dikoreksi: tanggal, uang fisik, setoran, dan catatan. Kas awal dan belanja laci tetap.</p>
+                  <label className="text-xs font-bold text-gray-600">Tanggal</label>
+                  <input type="date" value={edit.date} max={todayIso} onChange={e => setEdit({ ...edit, date: e.target.value })} style={{ ...inp2, marginBottom: 12 }} />
+                  {dateMoved && <p className="text-[11px] mb-3" style={{ color: '#b45309', background: '#fffbeb', borderRadius: 8, padding: '6px 8px' }}>Tanggal dipindah ke {fromIso(edit.date)}. Penjualan dan selisih dihitung ulang dari penjualan di tanggal itu, dan biaya belanja laci ikut pindah. Ditolak kalau tanggal itu sudah punya catatan.</p>}
+                  {!dateMoved && <div className="bg-slate-50 rounded-lg px-3 py-2 text-xs mb-3 flex justify-between"><span className="text-gray-500">Uang seharusnya</span><b>{rpFmt(exp)}</b></div>}
                   <label className="text-xs font-bold text-gray-600">Total Uang Fisik di Kasir</label>
                   <input type="text" inputMode="numeric" value={dotFmt(edit.counted)} onChange={e => setEdit({ ...edit, counted: digitsOnly(e.target.value) })} style={inp2} />
                   <label className="text-xs font-bold text-gray-600 block mt-3">Disetor ke pemilik</label>
                   <input type="text" inputMode="numeric" value={dotFmt(edit.deposit)} onChange={e => setEdit({ ...edit, deposit: digitsOnly(e.target.value) })} style={inp2} />
                   <label className="text-xs font-bold text-gray-600 block mt-3">Catatan</label>
                   <input type="text" value={edit.notes} onChange={e => setEdit({ ...edit, notes: e.target.value })} className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none" />
-                  <div className="mt-3 flex items-center justify-between text-xs"><span className="text-gray-500">Selisih baru</span><DiffBadge diff={c - exp} /></div>
+                  {!dateMoved && <div className="mt-3 flex items-center justify-between text-xs"><span className="text-gray-500">Selisih baru</span><DiffBadge diff={c - exp} /></div>}
                   <div className="mt-1 flex items-center justify-between text-xs"><span className="text-gray-500">Sisa untuk besok</span><b>{rpFmt(Math.max(0, c - d))}</b></div>
                   <div className="flex gap-2 mt-4">
                     <button onClick={() => setEdit(null)} disabled={edit.busy} className="flex-1 py-2.5 rounded-xl border text-sm font-bold text-gray-600">Batal</button>
