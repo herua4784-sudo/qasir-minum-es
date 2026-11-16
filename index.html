@@ -3187,7 +3187,7 @@
             <div className="flex-1 overflow-hidden">
               {keepAlive('laporan', <ReportView branch={branch} allowBranchFilter={true} />)}
               {keepAlive('penjualan', <ReportView branch={branch} allowBranchFilter={true} detailOnly={true} />)}
-              {keepAlive('tutup-outlet', <ClosingsHistoryView branch={branch} canDelete={true} />)}
+              {keepAlive('tutup-outlet', <ClosingsHistoryView branch={branch} canDelete={true} editor={user && (user.name || user.username)} />)}
               {keepAlive('keuangan', <FinancialReportView branch={branch} allowBranchFilter={true} />)}
               {keepAlive('kategori', <CategoryManagerView />)}
               {keepAlive('produk-katalog', <ProductManagerView branch={branch} />)}
@@ -7821,6 +7821,8 @@
     const rpFmt = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
     const digitsOnly = (v) => String(v || '').replace(/\D/g, '');
     // Tampilan angka dengan titik ribuan (500000 → 500.000); nilai tersimpan tetap angka murni.
+    // Peringatan salah ketik: angka yang terlalu kecil (mis. 1072 padahal maksudnya 1.072.000). pairs: [label, nilai, batasMinimum]
+    const smallWarn = (pairs) => { for (const p of pairs) { const n = Number(p[1]); if (n > 0 && n < p[2]) return p[0] + ' ' + rpFmt(n) + ' — maksudnya ' + rpFmt(n * 1000) + '?\nKalau memang segitu, tekan Lanjutkan. Kalau salah ketik, tekan Batal lalu perbaiki.'; } return ''; };
     const dotFmt = (v) => { const d = String(v || '').replace(/\D/g, '').replace(/^0+(?=\d)/, ''); return d.replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
 
     function DiffBadge({ diff, big }) {
@@ -7904,8 +7906,9 @@
       const opened = !!(rec && rec.Opened_At);
       const closed = !!(rec && rec.Closed);
 
-      const doOpen = async () => {
+      const doOpen = async (ok) => {
         if (cash === '') { notify.alert('Isi kas awal dulu (hitung uang di laci). Kalau kosong isi 0.', 'Kas Awal Belum Diisi', 'error'); return; }
+        if (ok !== true) { const w = smallWarn([['Kas Awal', cash, 10000]]); if (w) { notify.confirm(w, () => doOpen(true)); return; } }
         setBusy(true);
         try {
           const res = await runGoogleScript('openOutlet', branchId, eff.name, Number(cash), note, newRequestId());
@@ -7917,9 +7920,10 @@
       };
 
       // Simpan belanja dari laci SEKARANG (tidak perlu menunggu tutup outlet). Otomatis jadi Biaya Operasional.
-      const doSaveDrawer = async () => {
+      const doSaveDrawer = async (ok) => {
         const items = dItems.map(it => ({ type: it.type, note: it.note, amount: Number(it.amount) || 0 })).filter(it => it.amount > 0);
         if (items.length === 0) { notify.alert('Isi jumlah belanja dulu (Rp).', 'Jumlah Belum Diisi', 'error'); return; }
+        if (ok !== true) { const w = smallWarn(items.map(it => ['Belanja', it.amount, 1000])); if (w) { notify.confirm(w, () => doSaveDrawer(true)); return; } }
         setBusy(true);
         try {
           const res = await runGoogleScript('addDrawerExpense', branchId, eff.name, items);
@@ -7950,10 +7954,11 @@
         refreshLocal();
       });
 
-      const doClose = async () => {
+      const doClose = async (ok) => {
         if (dItems.some(it => Number(it.amount) > 0)) { notify.alert('Ada belanja dari laci yang belum disimpan. Tekan "Simpan Belanja" dulu, atau hapus barisnya.', 'Belanja Belum Disimpan', 'error'); return; }
         if (counted === '') { notify.alert('Hitung uang di laci lalu isi jumlahnya.', 'Uang Fisik Belum Diisi', 'error'); return; }
         if (Number(deposit || 0) > Number(counted)) { notify.alert('Setoran tidak boleh lebih besar dari uang yang dihitung.', 'Setoran Tidak Valid', 'error'); return; }
+        if (ok !== true) { const w = smallWarn([['Total Uang Fisik', counted, 10000], ['Disetor', deposit, 10000]]); if (w) { notify.confirm(w, () => doClose(true)); return; } }
         notify.confirm('Tutup outlet sekarang?\nUang fisik ' + rpFmt(counted) + (dexSaved > 0 ? ', belanja dari laci ' + rpFmt(dexSaved) : '') + ', setoran ' + rpFmt(deposit || 0) + '. Setelah ditutup tidak bisa diubah.', async () => {
           setBusy(true);
           try {
@@ -8032,7 +8037,7 @@
                     {st.suggestedOpeningCash > 0 && <p className="text-[11px] text-gray-400 mt-1">Kemarin ditinggal {rpFmt(st.suggestedOpeningCash)} di laci. Sesuaikan kalau hitungan Anda berbeda.</p>}
                     <label style={{ ...lbl, marginTop: 12 }}>Catatan (opsional)</label>
                     <input type="text" value={note} onChange={e => setNote(e.target.value)} placeholder="Misal: mesin es sudah nyala" className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none" />
-                    <button disabled={busy} onClick={doOpen} className="w-full mt-4 bg-emerald-500 disabled:bg-gray-300 text-white font-bold py-3.5 rounded-xl">{busy ? 'Menyimpan...' : 'Buka Outlet'}</button>
+                    <button disabled={busy} onClick={() => doOpen()} className="w-full mt-4 bg-emerald-500 disabled:bg-gray-300 text-white font-bold py-3.5 rounded-xl">{busy ? 'Menyimpan...' : 'Buka Outlet'}</button>
                   </div>
                 )}
 
@@ -8088,7 +8093,7 @@
                       </div>
                     ))}
                     {dItems.length > 0 && (
-                      <button disabled={busy || dexUnsaved <= 0} onClick={doSaveDrawer} className="w-full mb-3 bg-indigo-600 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl">{busy ? 'Menyimpan...' : 'Simpan Belanja' + (dexUnsaved > 0 ? ' · ' + rpFmt(dexUnsaved) : '')}</button>
+                      <button disabled={busy || dexUnsaved <= 0} onClick={() => doSaveDrawer()} className="w-full mb-3 bg-indigo-600 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl">{busy ? 'Menyimpan...' : 'Simpan Belanja' + (dexUnsaved > 0 ? ' · ' + rpFmt(dexUnsaved) : '')}</button>
                     )}
                     {(savedItems.length > 0 || pendAddItems.length > 0) && (
                       <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 8 }}>
@@ -8128,7 +8133,7 @@
                     {counted !== '' && <p className="text-[11px] text-gray-500 mt-1">Sisa di laci untuk besok: <b>{rpFmt(Math.max(0, Number(counted) - Number(deposit || 0)))}</b></p>}
                     <label style={{ ...lbl, marginTop: 12 }}>Catatan (opsional)</label>
                     <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Misal: 2 gelas tumpah, mesin es rewel" className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none" />
-                    <button disabled={busy} onClick={doClose} className="w-full mt-4 bg-rose-500 disabled:bg-gray-300 text-white font-bold py-3.5 rounded-xl">{busy ? 'Menyimpan...' : 'Tutup Outlet'}</button>
+                    <button disabled={busy} onClick={() => doClose()} className="w-full mt-4 bg-rose-500 disabled:bg-gray-300 text-white font-bold py-3.5 rounded-xl">{busy ? 'Menyimpan...' : 'Tutup Outlet'}</button>
                     <p className="text-[10px] text-gray-400 text-center mt-2">Rekap dihitung ulang oleh server saat outlet ditutup.</p>
                   </div>
                 )}
@@ -8153,7 +8158,7 @@
     }
 
     // Untuk Owner / Rekan Bisnis: riwayat tutup outlet + selisih kas.
-    function ClosingsHistoryView({ branch, canDelete }) {
+    function ClosingsHistoryView({ branch, canDelete, editor }) {
       const notify = useNotification();
       const branchId = branch ? branch.ID : undefined;
       const now = new Date();
@@ -8167,6 +8172,21 @@
       const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
       const totalDiff = rows.filter(r => r.Closed).reduce((a, r) => a + Number(r.Difference || 0), 0);
       const nSelisih = rows.filter(r => r.Closed && Math.round(r.Difference) !== 0).length;
+      // Koreksi salah ketik (khusus Owner): ubah Uang fisik, Disetor, Catatan.
+      const [edit, setEdit] = useState(null); // { r, counted, deposit, notes, busy }
+      const openEdit = (r) => setEdit({ r, counted: String(Math.round(Number(r.Counted_Cash) || 0)), deposit: String(Math.round(Number(r.Deposit) || 0)), notes: String(r.Notes || '').replace(/\s*\[Dikoreksi[^\]]*\]/g, '').trim(), busy: false });
+      const saveEdit = async (ok) => {
+        if (!edit) return;
+        if (edit.counted === '') { notify.alert('Isi uang fisik.', 'Belum Diisi', 'error'); return; }
+        if (Number(edit.deposit || 0) > Number(edit.counted)) { notify.alert('Setoran tidak boleh lebih besar dari uang fisik.', 'Tidak Valid', 'error'); return; }
+        if (ok !== true) { const w = smallWarn([['Uang fisik', edit.counted, 10000], ['Disetor', edit.deposit, 10000]]); if (w) { notify.confirm(w, () => saveEdit(true)); return; } }
+        setEdit(e => ({ ...e, busy: true }));
+        try {
+          const res = await runGoogleScript('editOutletClosing', edit.r.ID, Number(edit.counted), Number(edit.deposit || 0), edit.notes, editor || 'Owner');
+          if (res && res.success) { setEdit(null); load(true); notify.alert('Data tutup outlet dikoreksi. Selisih dihitung ulang.', 'Tersimpan', 'success'); }
+          else { setEdit(e => ({ ...e, busy: false })); notify.alert((res && res.message) || 'Gagal menyimpan.', 'Gagal', 'error'); }
+        } catch (e) { setEdit(x => ({ ...x, busy: false })); notify.alert('Butuh koneksi internet.', 'Gagal', 'error'); }
+      };
       const del = (r) => notify.confirm('Hapus catatan outlet tanggal ' + r.Date + '?\nPegawai bisa membuka/menutup outlet hari itu lagi.', async () => {
         try { const res = await runGoogleScript('deleteOutletClosing', r.ID); if (res && res.success) load(true); else notify.alert((res && res.message) || 'Gagal.', 'Gagal', 'error'); }
         catch (e) { notify.alert('Butuh koneksi internet.', 'Gagal', 'error'); }
@@ -8204,6 +8224,7 @@
                         </div>
                         <div className="flex items-center gap-2">
                           {r.Closed ? <DiffBadge diff={r.Difference} /> : <span className="text-xs font-bold px-2 py-1 rounded-lg" style={{ background: '#fffbeb', color: '#b45309' }}>Belum ditutup</span>}
+                          {canDelete && r.Closed && <button onClick={() => openEdit(r)} title="Koreksi uang fisik / setoran" className="text-indigo-500 w-7 h-7"><i className="fa-solid fa-pen-to-square text-xs"></i></button>}
                           {canDelete && <button onClick={() => del(r)} title="Hapus catatan" className="text-red-400 w-7 h-7"><i className="fa-solid fa-trash-can text-xs"></i></button>}
                         </div>
                       </div>
@@ -8222,6 +8243,31 @@
                 </div>
               )}
           </div>
+          {edit && (() => {
+            const exp = Number(edit.r.Expected_Cash) || 0, c = Number(edit.counted || 0), d = Number(edit.deposit || 0);
+            const inp2 = { width: '100%', padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 12, fontSize: 16, fontWeight: 700 };
+            return (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+                <div style={{ background: '#fff', borderRadius: 16, padding: 18, width: '100%', maxWidth: 420, maxHeight: '90vh', overflowY: 'auto' }}>
+                  <h3 className="font-bold text-gray-800">Koreksi Tutup Outlet · {edit.r.Date}</h3>
+                  <p className="text-xs text-gray-500 mt-1 mb-3">Hanya uang fisik, setoran, dan catatan yang bisa dikoreksi. Kas awal, penjualan, dan belanja laci tetap.</p>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-xs mb-3 flex justify-between"><span className="text-gray-500">Uang seharusnya</span><b>{rpFmt(exp)}</b></div>
+                  <label className="text-xs font-bold text-gray-600">Total Uang Fisik di Kasir</label>
+                  <input type="text" inputMode="numeric" value={dotFmt(edit.counted)} onChange={e => setEdit({ ...edit, counted: digitsOnly(e.target.value) })} style={inp2} />
+                  <label className="text-xs font-bold text-gray-600 block mt-3">Disetor ke pemilik</label>
+                  <input type="text" inputMode="numeric" value={dotFmt(edit.deposit)} onChange={e => setEdit({ ...edit, deposit: digitsOnly(e.target.value) })} style={inp2} />
+                  <label className="text-xs font-bold text-gray-600 block mt-3">Catatan</label>
+                  <input type="text" value={edit.notes} onChange={e => setEdit({ ...edit, notes: e.target.value })} className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none" />
+                  <div className="mt-3 flex items-center justify-between text-xs"><span className="text-gray-500">Selisih baru</span><DiffBadge diff={c - exp} /></div>
+                  <div className="mt-1 flex items-center justify-between text-xs"><span className="text-gray-500">Sisa untuk besok</span><b>{rpFmt(Math.max(0, c - d))}</b></div>
+                  <div className="flex gap-2 mt-4">
+                    <button onClick={() => setEdit(null)} disabled={edit.busy} className="flex-1 py-2.5 rounded-xl border text-sm font-bold text-gray-600">Batal</button>
+                    <button onClick={() => saveEdit()} disabled={edit.busy} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white" style={{ background: edit.busy ? '#9ca3af' : '#4f46e5' }}>{edit.busy ? 'Menyimpan...' : 'Simpan Koreksi'}</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       );
     }
