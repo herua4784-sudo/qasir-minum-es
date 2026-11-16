@@ -7820,6 +7820,8 @@
     // ==========================================
     const rpFmt = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
     const digitsOnly = (v) => String(v || '').replace(/\D/g, '');
+    // Tampilan angka dengan titik ribuan (500000 → 500.000); nilai tersimpan tetap angka murni.
+    const dotFmt = (v) => { const d = String(v || '').replace(/\D/g, '').replace(/^0+(?=\d)/, ''); return d.replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
 
     function DiffBadge({ diff, big }) {
       const d = Math.round(Number(diff) || 0);
@@ -8024,8 +8026,8 @@
                 {!opened && !closed && (
                   <div style={card}>
                     <h3 className="font-bold text-gray-800 mb-3">Buka Outlet</h3>
-                    <label style={lbl}>Kas awal di laci (hitung uangnya)</label>
-                    <input type="text" inputMode="numeric" value={cash} onChange={e => { setCash(digitsOnly(e.target.value)); setCashTouched(true); }} placeholder="0" style={inp} />
+                    <label style={lbl}>Kas Awal</label>
+                    <input type="text" inputMode="numeric" value={dotFmt(cash)} onChange={e => { setCash(digitsOnly(e.target.value)); setCashTouched(true); }} placeholder="0" style={inp} />
                     <p className="text-sm font-bold text-indigo-600 mt-1">{cash !== '' ? rpFmt(cash) : ''}</p>
                     {st.suggestedOpeningCash > 0 && <p className="text-[11px] text-gray-400 mt-1">Kemarin ditinggal {rpFmt(st.suggestedOpeningCash)} di laci. Sesuaikan kalau hitungan Anda berbeda.</p>}
                     <label style={{ ...lbl, marginTop: 12 }}>Catatan (opsional)</label>
@@ -8080,7 +8082,7 @@
                           <span className="text-sm font-bold text-gray-700">{it.type === 'air' ? 'Beli Air' : it.type === 'gas' ? 'Beli Gas LPG 3kg' : 'Pengeluaran lain'}</span>
                           <button type="button" onClick={() => setDItems(list => list.filter((_, k) => k !== i))} className="text-red-400 w-7 h-7" title="Hapus baris"><i className="fa-solid fa-xmark"></i></button>
                         </div>
-                        <input type="text" inputMode="numeric" value={it.amount} onChange={e => setItem(i, { amount: digitsOnly(e.target.value) })} placeholder="Jumlah (Rp)" style={{ ...inp, fontSize: 16 }} />
+                        <input type="text" inputMode="numeric" value={dotFmt(it.amount)} onChange={e => setItem(i, { amount: digitsOnly(e.target.value) })} placeholder="Jumlah (Rp)" style={{ ...inp, fontSize: 16 }} />
                         {it.amount !== '' && <p className="text-[11px] font-bold text-indigo-600 mt-1">{rpFmt(it.amount)}</p>}
                         {(it.type === 'lain' || it.note) && <input type="text" value={it.note} onChange={e => setItem(i, { note: e.target.value })} placeholder={it.type === 'lain' ? 'Untuk apa? Misal: beli es batu' : 'Catatan (opsional)'} className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none mt-2" />}
                       </div>
@@ -8113,8 +8115,8 @@
                 {opened && !closed && (
                   <div style={card}>
                     <h3 className="font-bold text-gray-800 mb-3">Tutup Outlet</h3>
-                    <label style={lbl}>Uang fisik di laci (hitung dulu)</label>
-                    <input type="text" inputMode="numeric" value={counted} onChange={e => setCounted(digitsOnly(e.target.value))} placeholder="0" style={inp} />
+                    <label style={lbl}>Total Uang Fisik di Kasir</label>
+                    <input type="text" inputMode="numeric" value={dotFmt(counted)} onChange={e => setCounted(digitsOnly(e.target.value))} placeholder="0" style={inp} />
                     {liveDiff !== null && (
                       <div className="mt-2 flex items-center justify-between">
                         <span className="text-xs text-gray-500">Seharusnya {rpFmt(expectedLive)}</span>
@@ -8122,7 +8124,7 @@
                       </div>
                     )}
                     <label style={{ ...lbl, marginTop: 12 }}>Disetor ke pemilik</label>
-                    <input type="text" inputMode="numeric" value={deposit} onChange={e => setDeposit(digitsOnly(e.target.value))} placeholder="0" style={{ ...inp, fontSize: 16 }} />
+                    <input type="text" inputMode="numeric" value={dotFmt(deposit)} onChange={e => setDeposit(digitsOnly(e.target.value))} placeholder="0" style={{ ...inp, fontSize: 16 }} />
                     {counted !== '' && <p className="text-[11px] text-gray-500 mt-1">Sisa di laci untuk besok: <b>{rpFmt(Math.max(0, Number(counted) - Number(deposit || 0)))}</b></p>}
                     <label style={{ ...lbl, marginTop: 12 }}>Catatan (opsional)</label>
                     <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Misal: 2 gelas tumpah, mesin es rewel" className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none" />
