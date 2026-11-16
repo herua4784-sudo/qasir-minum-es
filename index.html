@@ -7863,12 +7863,7 @@
           const nx = await offlineCacheGet('outnext:' + branchId);
           if (nx && nx.date !== dayStrLocal()) sug = Number(nx.next) || 0; else sug = Number(await offlineCacheGet('outsug:' + branchId)) || 0;
         } catch (e) {}
-        let low = [];
-        try {
-          const ings = await runGoogleScript('getIngredients', branchId);
-          low = (ings || []).filter(i => Number(i.Min_Stock) > 0 && effStock(i) <= Number(i.Min_Stock)).map(i => ({ name: i.Name, unit: i.Unit, stock: Math.round(effStock(i) * 100) / 100, min: Number(i.Min_Stock) }));
-        } catch (e) {}
-        return { date: dayStrLocal(), record: null, suggestedOpeningCash: sug, summary: { count: 0, total: 0, cash: 0, qris: 0, byMethod: {} }, waste: [], lowStock: low };
+        return { date: dayStrLocal(), record: null, suggestedOpeningCash: sug, summary: { count: 0, total: 0, cash: 0, qris: 0, byMethod: {} }, waste: [], lowStock: [] };
       };
       const load = (skip) => swrFetch('outday:' + branchId + ':' + attDayKey(), () => runGoogleScript('getOutletDayStatus', branchId), (d, fromCache) => {
         setSt(d); setLoading(false); setStale(!!fromCache);
@@ -7991,14 +7986,6 @@
                     <label style={{ ...lbl, marginTop: 12 }}>Catatan (opsional)</label>
                     <input type="text" value={note} onChange={e => setNote(e.target.value)} placeholder="Misal: mesin es sudah nyala" className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none" />
                     <button disabled={busy} onClick={doOpen} className="w-full mt-4 bg-emerald-500 disabled:bg-gray-300 text-white font-bold py-3.5 rounded-xl">{busy ? 'Menyimpan...' : 'Buka Outlet'}</button>
-                  </div>
-                )}
-
-                {/* STOK MENIPIS */}
-                {!closed && st.lowStock && st.lowStock.length > 0 && (
-                  <div style={card}>
-                    <h3 className="font-bold text-gray-800 mb-2"><i className="fa-solid fa-triangle-exclamation mr-2" style={{ color: '#d97706' }}></i>Stok Menipis</h3>
-                    {st.lowStock.map((b, i) => <div key={i} className="flex justify-between text-sm py-1"><span className="text-gray-700">{b.name}</span><span className="font-bold" style={{ color: '#dc2626' }}>{b.stock} {b.unit} <span className="text-gray-400 font-normal">(min {b.min})</span></span></div>)}
                   </div>
                 )}
 
