@@ -234,7 +234,9 @@
     // tetap kekosong seperti biasa), lalu OTOMATIS dikirim ke server begitu internet
     // kembali -- tanpa kasir perlu input ulang apapun.
     // ==========================================
-    const OFFLINE_QUEUEABLE_FUNCTIONS = ['saveTransaction', 'recordAttendance', 'recordStockMovement', 'produceBatch', 'openOutlet', 'closeOutlet', 'addUangMakan'];
+    const OFFLINE_QUEUEABLE_FUNCTIONS = ['saveTransaction', 'recordAttendance', 'recordStockMovement', 'produceBatch', 'openOutlet', 'closeOutlet', 'addUangMakan', 'addDrawerExpense'];
+    // Fungsi yang ikut membawa jam asli tablet saat masuk antrian offline (jadi tanggal/jam tidak bergeser saat sinkron).
+    const CLIENT_TIME_FNS = ['openOutlet', 'closeOutlet', 'addDrawerExpense'];
 
     // ==========================================
     // KUNCI ANTI-GANDA: tiap permintaan tulis diberi "kunci unik" SEKALI saat pertama
@@ -244,7 +246,7 @@
     // tidak ditulis dua kali. Kunci diletakkan sebagai argumen TERAKHIR; jumlah
     // argumen baku tiap fungsi dicatat di bawah supaya posisinya selalu tepat.
     // ==========================================
-    const QUEUEABLE_ARITY = { saveTransaction: 9, recordAttendance: 4, recordStockMovement: 8, produceBatch: 4, openOutlet: 4, closeOutlet: 6, addUangMakan: 3 };
+    const QUEUEABLE_ARITY = { saveTransaction: 9, recordAttendance: 4, recordStockMovement: 8, produceBatch: 4, openOutlet: 4, closeOutlet: 6, addUangMakan: 3, addDrawerExpense: 3 };
 
     function newRequestId() {
       try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* lanjut ke cara cadangan */ }
@@ -323,7 +325,7 @@
         // di tampilan). Jam pencatatan asli ikut tersimpan supaya riwayat tidak memakai jam sinkron.
         return { success: true, newStock: null, unit: '', date: pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + String(now.getFullYear()).slice(-2) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) };
       }
-      if (functionName === 'openOutlet' || functionName === 'closeOutlet') {
+      if (CLIENT_TIME_FNS.indexOf(functionName) !== -1) {
         // Jam asli ikut tersimpan: buka/tutup yang baru terkirim lewat tengah malam tetap tercatat di tanggalnya.
         return { success: true, clientTime: pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) };
       }
@@ -683,7 +685,7 @@
     function queueWriteOnly(functionName, ...args) {
       const keyedArgs = withRequestId(functionName, args);
       const optimistic = buildOptimisticResult(functionName);
-      const queuedArgs = (functionName === 'openOutlet' || functionName === 'closeOutlet') ? keyedArgs.concat([optimistic.clientTime]) : keyedArgs;
+      const queuedArgs = CLIENT_TIME_FNS.indexOf(functionName) !== -1 ? keyedArgs.concat([optimistic.clientTime]) : keyedArgs;
       return queueAddWrite({ functionName, args: queuedArgs, optimistic, createdAt: Date.now() }).then(() => Object.assign({}, optimistic, { offlineQueued: true }));
     }
 
@@ -737,7 +739,7 @@
           const optimistic = buildOptimisticResult(functionName);
           // Transaksi offline: ikutkan nomor & jam yang SUDAH tercetak di struk, supaya
           // server mencatat persis yang sama (bukan nomor/jam saat sinkron).
-          const queuedArgs = functionName === 'saveTransaction' ? keyedArgs.concat([optimistic.trxId, optimistic.date]) : (functionName === 'produceBatch' ? keyedArgs.concat([optimistic.date]) : ((functionName === 'openOutlet' || functionName === 'closeOutlet') ? keyedArgs.concat([optimistic.clientTime]) : keyedArgs));
+          const queuedArgs = functionName === 'saveTransaction' ? keyedArgs.concat([optimistic.trxId, optimistic.date]) : (functionName === 'produceBatch' ? keyedArgs.concat([optimistic.date]) : (CLIENT_TIME_FNS.indexOf(functionName) !== -1 ? keyedArgs.concat([optimistic.clientTime]) : keyedArgs));
           return queueAddWrite({ functionName, args: queuedArgs, optimistic, createdAt: Date.now() }).then(() => {
             noteSale();
             console.warn('[Offline] ' + functionName + ' disimpan ke antrian lokal, akan otomatis dikirim begitu online.');
@@ -7833,7 +7835,7 @@
       const branchId = branch ? branch.ID : 'BR001';
       const [st, setSt] = useState(null);
       const [stale, setStale] = useState(true); // true = belum ada jawaban segar dari server (offline / masih memuat)
-      const [pend, setPend] = useState({ open: null, close: null, sales: 0 });
+      const [pend, setPend] = useState({ open: null, close: null, sales: 0, adds: [] });
       const [localSum, setLocalSum] = useState(null);
       const [loading, setLoading] = useState(true);
       const [cash, setCash] = useState('');
@@ -7851,7 +7853,8 @@
           setPend({
             open: act.find(i => i.functionName === 'openOutlet' && i.args[0] === branchId) || null,
             close: act.find(i => i.functionName === 'closeOutlet' && i.args[0] === branchId) || null,
-            sales: act.filter(i => i.functionName === 'saveTransaction' && i.args[8] === branchId).length
+            sales: act.filter(i => i.functionName === 'saveTransaction' && i.args[8] === branchId).length,
+            adds: act.filter(i => i.functionName === 'addDrawerExpense' && i.args[0] === branchId)
           });
           setLocalSum(ls);
         }).catch(() => {});
@@ -7876,18 +7879,25 @@
 
       const zeroSum = { count: 0, total: 0, cash: 0, qris: 0, byMethod: {} };
       // Selama offline / masih ada yang antri, rekap dihitung dari penjualan di tablet ini (perkiraan).
-      const useLocal = stale || pend.sales > 0 || !!pend.open || !!pend.close;
+      const useLocal = stale || pend.sales > 0 || !!pend.open || !!pend.close || pend.adds.length > 0;
       const sum = (useLocal && localSum) ? localSum : ((st && st.summary) || zeroSum);
       const fmtWhen = (item) => { const d = new Date(item.createdAt || Date.now()), p = (x) => String(x).padStart(2, '0'); return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); };
+      const drawerLabel = (it) => it.type === 'air' ? 'Beli Air' : it.type === 'gas' ? 'Beli Gas LPG 3kg' : (String(it.note || '').trim() || 'Pengeluaran lain');
+      // Belanja laci yang sudah tersimpan di server + yang masih menunggu sinkron (dibuat saat offline).
+      const savedItems = (st && Array.isArray(st.drawerItems)) ? st.drawerItems : [];
+      const pendAddItems = [];
+      pend.adds.forEach(q => (Array.isArray(q.args[2]) ? q.args[2] : []).forEach((it, k) => { if (Number(it.amount) > 0) pendAddItems.push({ key: 'p' + q.id + '-' + k, queueId: q.id, label: drawerLabel(it) + (it.type !== 'lain' && it.note ? ' (' + it.note + ')' : ''), amount: Number(it.amount) }); }));
+      const serverDex = st && st.record ? (Number(st.record.Drawer_Expense) || 0) : 0;
+      const dexSaved = serverDex + pendAddItems.reduce((t, it) => t + it.amount, 0);
       let rec = st && st.record;
       if (st && !(rec && rec.Opened_At) && pend.open) {
         rec = { Opened_By: pend.open.args[1], Opened_At: fmtWhen(pend.open), Opening_Cash: Number(pend.open.args[2]) || 0, Opening_Note: pend.open.args[3] || '', Closed: false, _pending: true };
       }
       if (rec && rec.Opened_At && !rec.Closed && pend.close) {
         const a = pend.close.args, its = Array.isArray(a[5]) ? a[5] : [];
-        const dx = its.reduce((t, it) => t + (Number(it.amount) || 0), 0);
+        const dx = dexSaved + its.reduce((t, it) => t + (Number(it.amount) || 0), 0);
         const exp = (Number(rec.Opening_Cash) || 0) + sum.cash - dx;
-        rec = Object.assign({}, rec, { Closed: true, Closed_By: a[1], Closed_At: fmtWhen(pend.close), Trx_Count: sum.count, Total_Sales: sum.total, Cash_Sales: sum.cash, Qris_Sales: sum.qris, Expected_Cash: exp, Counted_Cash: Number(a[2]) || 0, Difference: (Number(a[2]) || 0) - exp, Deposit: Number(a[3]) || 0, Next_Opening_Cash: (Number(a[2]) || 0) - (Number(a[3]) || 0), Notes: a[4] || '', Drawer_Expense: dx, Drawer_Note: its.filter(it => Number(it.amount) > 0).map(it => (it.type === 'air' ? 'Beli Air' : it.type === 'gas' ? 'Beli Gas LPG 3kg' : (it.note || 'Lainnya'))).join(', '), _pending: true });
+        rec = Object.assign({}, rec, { Closed: true, Closed_By: a[1], Closed_At: fmtWhen(pend.close), Trx_Count: sum.count, Total_Sales: sum.total, Cash_Sales: sum.cash, Qris_Sales: sum.qris, Expected_Cash: exp, Counted_Cash: Number(a[2]) || 0, Difference: (Number(a[2]) || 0) - exp, Deposit: Number(a[3]) || 0, Next_Opening_Cash: (Number(a[2]) || 0) - (Number(a[3]) || 0), Notes: a[4] || '', Drawer_Expense: dx, Drawer_Note: [(rec.Drawer_Note || '')].concat(pendAddItems.map(it => it.label + ' ' + it.amount)).concat(its.filter(it => Number(it.amount) > 0).map(it => drawerLabel(it) + ' ' + it.amount)).filter(x => x).join('; '), _pending: true });
       }
       const opened = !!(rec && rec.Opened_At);
       const closed = !!(rec && rec.Closed);
@@ -7904,17 +7914,41 @@
         setBusy(false);
       };
 
+      // Simpan belanja dari laci SEKARANG (tidak perlu menunggu tutup outlet). Otomatis jadi Biaya Operasional.
+      const doSaveDrawer = async () => {
+        const items = dItems.map(it => ({ type: it.type, note: it.note, amount: Number(it.amount) || 0 })).filter(it => it.amount > 0);
+        if (items.length === 0) { notify.alert('Isi jumlah belanja dulu (Rp).', 'Jumlah Belum Diisi', 'error'); return; }
+        setBusy(true);
+        try {
+          const res = await runGoogleScript('addDrawerExpense', branchId, eff.name, items);
+          if (res && res.success) {
+            setDItems([]);
+            if (res.offlineQueued) { notify.alert('Belanja tersimpan di tablet dan dikirim otomatis saat internet kembali.', 'Tersimpan (Offline)', 'success'); refreshLocal(); }
+            else { notify.alert('Belanja dari laci tersimpan dan tercatat di Biaya Operasional.', 'Tersimpan', 'success'); load(true); }
+          } else { notify.alert((res && res.message) || 'Gagal menyimpan belanja.', 'Gagal', 'error'); load(true); }
+        } catch (e) { notify.alert('Gagal menyimpan belanja. Coba lagi.', 'Gagal', 'error'); }
+        setBusy(false);
+      };
+      const doDeleteSaved = (it) => notify.confirm('Hapus catatan "' + it.label + '" ' + rpFmt(it.amount) + '?\nBiaya Operasional-nya ikut terhapus.', async () => {
+        try {
+          const res = await runGoogleScript('deleteDrawerExpense', branchId, it.id);
+          if (res && res.success) load(true); else notify.alert((res && res.message) || 'Gagal menghapus.', 'Gagal', 'error');
+        } catch (e) { notify.alert('Menghapus butuh koneksi internet. Coba lagi saat online.', 'Tidak Ada Internet', 'error'); }
+      });
+      const doDeletePending = (it) => notify.confirm('Batalkan catatan belanja yang belum terkirim?', async () => { await queueRemoveWrite(it.queueId); refreshLocal(); });
+
       const doClose = async () => {
+        if (dItems.some(it => Number(it.amount) > 0)) { notify.alert('Ada belanja dari laci yang belum disimpan. Tekan "Simpan Belanja" dulu, atau hapus barisnya.', 'Belanja Belum Disimpan', 'error'); return; }
         if (counted === '') { notify.alert('Hitung uang di laci lalu isi jumlahnya.', 'Uang Fisik Belum Diisi', 'error'); return; }
         if (Number(deposit || 0) > Number(counted)) { notify.alert('Setoran tidak boleh lebih besar dari uang yang dihitung.', 'Setoran Tidak Valid', 'error'); return; }
-        notify.confirm('Tutup outlet sekarang?\nUang fisik ' + rpFmt(counted) + (dex > 0 ? ', dipakai belanja dari laci ' + rpFmt(dex) : '') + ', setoran ' + rpFmt(deposit || 0) + '. Setelah ditutup tidak bisa diubah.', async () => {
+        notify.confirm('Tutup outlet sekarang?\nUang fisik ' + rpFmt(counted) + (dexSaved > 0 ? ', belanja dari laci ' + rpFmt(dexSaved) : '') + ', setoran ' + rpFmt(deposit || 0) + '. Setelah ditutup tidak bisa diubah.', async () => {
           setBusy(true);
           try {
-            const items = dItems.map(it => ({ type: it.type, note: it.note, amount: Number(it.amount) || 0 }));
+            const items = [];
             // Coba kirim dulu transaksi yang masih antri; kalau masih ada yang belum terkirim, tutup ikut antri
             // (disusulkan SESUDAH transaksinya) dan selisih dihitung dari penjualan di tablet ini.
             let stillPending = 0;
-            try { await trySyncOfflineQueue(); stillPending = ((await queueGetAllWrites()) || []).filter(i => !i.failed && i.functionName === 'saveTransaction').length; } catch (e) {}
+            try { await trySyncOfflineQueue(); stillPending = ((await queueGetAllWrites()) || []).filter(i => !i.failed && (i.functionName === 'saveTransaction' || i.functionName === 'openOutlet' || i.functionName === 'addDrawerExpense')).length; } catch (e) {}
             const res = stillPending > 0
               ? await queueWriteOnly('closeOutlet', branchId, eff.name, Number(counted), Number(deposit || 0), notes, items)
               : await runGoogleScript('closeOutlet', branchId, eff.name, Number(counted), Number(deposit || 0), notes, items, newRequestId());
@@ -7923,7 +7957,7 @@
               let d, nextCash, est = false;
               if (res.offlineQueued) {
                 const ls = await localDaySummary(branchId);
-                const expected = (opened ? Number(rec.Opening_Cash) : 0) + ls.cash - dex;
+                const expected = (opened ? Number(rec.Opening_Cash) : 0) + ls.cash - dexSaved;
                 d = Math.round(Number(counted) - expected); nextCash = Number(counted) - Number(deposit || 0); est = true;
               } else { d = Math.round(res.difference); nextCash = res.nextOpeningCash; }
               notify.alert((d === 0 ? 'Uang di laci PAS. Outlet ditutup.' : (d > 0 ? 'Uang LEBIH ' + rpFmt(d) : 'Uang KURANG ' + rpFmt(-d) + '. Hitung ulang uang di laci kalau belum yakin.')) + '\nSisa di laci untuk besok: ' + rpFmt(nextCash) + (est ? '\n\nHitungan dari penjualan di tablet ini (perkiraan). Tersimpan offline dan dicek ulang server saat internet kembali.' : ''), d === 0 ? 'Outlet Ditutup' : 'Selisih Kas', d === 0 ? 'success' : 'warning');
@@ -7937,8 +7971,8 @@
       const card = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, padding: 16, marginBottom: 14 };
       const lbl = { fontSize: 12, fontWeight: 700, color: '#4b5563', display: 'block', marginBottom: 4 };
       const inp = { width: '100%', padding: '12px 14px', border: '1px solid #d1d5db', borderRadius: 12, fontSize: 20, fontWeight: 800, outline: 'none' };
-      const dex = dItems.reduce((a, it) => a + (Number(it.amount) || 0), 0);
-      const expectedLive = (opened ? Number(rec.Opening_Cash) : 0) + Number(sum.cash || 0) - dex;
+      const dexUnsaved = dItems.reduce((a, it) => a + (Number(it.amount) || 0), 0);
+      const expectedLive = (opened ? Number(rec.Opening_Cash) : 0) + Number(sum.cash || 0) - dexSaved;
       const addItem = (type) => setDItems(list => [...list, { type, amount: '', note: '' }]);
       const setItem = (i, patch) => setDItems(list => list.map((it, k) => k === i ? { ...it, ...patch } : it));
       const liveDiff = counted === '' ? null : Number(counted) - expectedLive;
@@ -8002,7 +8036,8 @@
                         {row('Tunai', rpFmt(r.cash))}
                         {row('QRIS', rpFmt(r.qris))}
                         {row('Kas awal', rpFmt(rec.Opening_Cash))}
-                        {closed && rec.Drawer_Expense > 0 && row('Diambil dari laci' + (rec.Drawer_Note ? ' (' + rec.Drawer_Note + ')' : ''), '− ' + rpFmt(rec.Drawer_Expense))}
+                        {closed && rec.Drawer_Expense > 0 && row('Belanja dari laci' + (rec.Drawer_Note ? ' (' + rec.Drawer_Note + ')' : ''), '− ' + rpFmt(rec.Drawer_Expense))}
+                        {!closed && dexSaved > 0 && row('Belanja dari laci', '− ' + rpFmt(dexSaved))}
                         {row('Uang tunai seharusnya di laci', rpFmt(closed ? rec.Expected_Cash : expectedLive), true)}
                       </>);
                     })()}
@@ -8018,11 +8053,11 @@
                   </div>
                 )}
 
-                {/* TUTUP OUTLET */}
+                {/* BELANJA DARI LACI: disimpan langsung, tidak menunggu tutup outlet */}
                 {opened && !closed && (
                   <div style={card}>
-                    <h3 className="font-bold text-gray-800 mb-3">Tutup Outlet</h3>
-                    <label style={lbl}>Uang laci yang dipakai belanja hari ini (jika ada)</label>
+                    <h3 className="font-bold text-gray-800 mb-1">Belanja dari Laci</h3>
+                    <p className="text-[11px] text-gray-400 mb-3">Pakai uang laci untuk beli air, gas, dll.? Catat di sini, lalu tekan Simpan. Otomatis jadi Biaya Operasional dan mengurangi uang yang seharusnya ada di laci.</p>
                     <div className="flex flex-wrap gap-2 mb-2">
                       {[['air', 'Beli Air', 'fa-droplet'], ['gas', 'Beli Gas LPG 3kg', 'fa-fire-flame-simple'], ['lain', 'Lainnya', 'fa-plus']].map(([t, l, ic]) => (
                         <button key={t} type="button" onClick={() => addItem(t)} style={{ border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca', fontWeight: 700, fontSize: 12, borderRadius: 10, padding: '8px 12px' }}><i className={'fa-solid ' + ic + ' mr-1'}></i>{l}</button>
@@ -8039,7 +8074,34 @@
                         {(it.type === 'lain' || it.note) && <input type="text" value={it.note} onChange={e => setItem(i, { note: e.target.value })} placeholder={it.type === 'lain' ? 'Untuk apa? Misal: beli es batu' : 'Catatan (opsional)'} className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none mt-2" />}
                       </div>
                     ))}
-                    <p className="text-[11px] text-gray-400 mb-3">{dex > 0 ? 'Total dipakai dari laci: ' + rpFmt(dex) + '. ' : ''}Dikurangkan dari uang seharusnya di laci dan otomatis tercatat di Biaya Operasional (Air, Gas LPG, Lainnya). Jangan dicatat dobel.</p>
+                    {dItems.length > 0 && (
+                      <button disabled={busy || dexUnsaved <= 0} onClick={doSaveDrawer} className="w-full mb-3 bg-indigo-600 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl">{busy ? 'Menyimpan...' : 'Simpan Belanja' + (dexUnsaved > 0 ? ' · ' + rpFmt(dexUnsaved) : '')}</button>
+                    )}
+                    {(savedItems.length > 0 || pendAddItems.length > 0) && (
+                      <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 8 }}>
+                        <p className="text-[11px] font-bold text-gray-500 uppercase mb-1">Tersimpan hari ini</p>
+                        {savedItems.map(it => (
+                          <div key={it.id} className="flex items-center justify-between text-sm py-1">
+                            <span className="text-gray-700">{it.label}</span>
+                            <span className="flex items-center gap-2"><b>{rpFmt(it.amount)}</b><button type="button" onClick={() => doDeleteSaved(it)} className="text-red-400 w-6 h-6" title="Hapus catatan"><i className="fa-solid fa-trash-can text-xs"></i></button></span>
+                          </div>
+                        ))}
+                        {pendAddItems.map(it => (
+                          <div key={it.key} className="flex items-center justify-between text-sm py-1">
+                            <span className="text-gray-700">{it.label} <span className="text-[10px] text-amber-600 font-semibold">menunggu sinkron</span></span>
+                            <span className="flex items-center gap-2"><b>{rpFmt(it.amount)}</b><button type="button" onClick={() => doDeletePending(it)} className="text-red-400 w-6 h-6" title="Batalkan"><i className="fa-solid fa-xmark"></i></button></span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between text-sm pt-1 mt-1 border-t border-gray-100"><span className="text-gray-600">Total belanja dari laci</span><b>{rpFmt(dexSaved)}</b></div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TUTUP OUTLET */}
+                {opened && !closed && (
+                  <div style={card}>
+                    <h3 className="font-bold text-gray-800 mb-3">Tutup Outlet</h3>
                     <label style={lbl}>Uang fisik di laci (hitung dulu)</label>
                     <input type="text" inputMode="numeric" value={counted} onChange={e => setCounted(digitsOnly(e.target.value))} placeholder="0" style={inp} />
                     {liveDiff !== null && (
