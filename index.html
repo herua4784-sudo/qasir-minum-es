@@ -8172,6 +8172,12 @@
       const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
       const totalDiff = rows.filter(r => r.Closed).reduce((a, r) => a + Number(r.Difference || 0), 0);
       const nSelisih = rows.filter(r => r.Closed && Math.round(r.Difference) !== 0).length;
+      const closedRows = rows.filter(r => r.Closed);
+      const sumOf = (k) => closedRows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+      const [filter, setFilter] = useState('all'); // 'all' | 'selisih'
+      const [openIds, setOpenIds] = useState({});
+      const toggleRow = (id) => setOpenIds(o => ({ ...o, [id]: !o[id] }));
+      const shown = filter === 'selisih' ? rows.filter(r => r.Closed && Math.round(r.Difference) !== 0) : rows;
       // Koreksi salah ketik (khusus Owner): ubah Uang fisik, Disetor, Catatan.
       const [edit, setEdit] = useState(null); // { r, counted, deposit, notes, busy }
       const toIso = (d) => { const m = String(d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : ''; };
@@ -8211,40 +8217,55 @@
               </div>
             </div>
             {rows.some(r => r.Closed) && (
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                <div className="bg-white border rounded-xl p-3"><p className="text-[11px] text-gray-400 font-bold uppercase">Hari dengan selisih</p><p className="text-xl font-bold text-gray-800">{nSelisih} <span className="text-xs text-gray-400 font-normal">dari {rows.filter(r => r.Closed).length} hari</span></p></div>
-                <div className="bg-white border rounded-xl p-3"><p className="text-[11px] text-gray-400 font-bold uppercase">Total selisih bulan ini</p><div className="mt-1"><DiffBadge diff={totalDiff} /></div></div>
+              <div className="mb-4">
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+                  <div className="bg-white border rounded-xl p-3"><p className="text-[11px] text-gray-400 font-bold uppercase">Total penjualan</p><p className="text-base font-bold text-gray-800 mt-1">{rpFmt(sumOf('Total_Sales'))}</p></div>
+                  <div className="bg-white border rounded-xl p-3"><p className="text-[11px] text-gray-400 font-bold uppercase">Belanja dari laci</p><p className="text-base font-bold text-gray-800 mt-1">{rpFmt(sumOf('Drawer_Expense'))}</p></div>
+                  <div className="bg-white border rounded-xl p-3"><p className="text-[11px] text-gray-400 font-bold uppercase">Total setoran</p><p className="text-base font-bold text-gray-800 mt-1">{rpFmt(sumOf('Deposit'))}</p></div>
+                  <div className="bg-white border rounded-xl p-3"><p className="text-[11px] text-gray-400 font-bold uppercase">Total selisih</p><div className="mt-1"><DiffBadge diff={totalDiff} /></div></div>
+                  <div className="bg-white border rounded-xl p-3"><p className="text-[11px] text-gray-400 font-bold uppercase">Hari dengan selisih</p><p className="text-base font-bold text-gray-800 mt-1">{nSelisih} <span className="text-xs text-gray-400 font-normal">dari {closedRows.length} hari</span></p></div>
+                </div>
+                <div className="flex gap-2 mt-3">
+                  {[['all', 'Semua (' + rows.length + ')'], ['selisih', 'Ada selisih (' + nSelisih + ')']].map(([k, l]) => (
+                    <button key={k} onClick={() => setFilter(k)} className="text-xs font-bold px-3 py-1.5 rounded-full border" style={filter === k ? { background: '#4f46e5', color: '#fff', borderColor: '#4f46e5' } : { background: '#fff', color: '#6b7280' }}>{l}</button>
+                  ))}
+                </div>
               </div>
             )}
             {loading && rows.length === 0 ? <p className="text-center text-gray-400 py-10"><i className="fa-solid fa-spinner fa-spin"></i></p>
               : rows.length === 0 ? <p className="text-center text-gray-400 py-10">Belum ada catatan buka/tutup outlet pada bulan ini.</p>
+              : shown.length === 0 ? <p className="text-center text-gray-400 py-10">Tidak ada hari dengan selisih pada bulan ini.</p>
               : (
                 <div className="space-y-3">
-                  {rows.map(r => (
-                    <div key={r.ID} className="bg-white border rounded-2xl p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="font-bold text-gray-800">{r.Date}{r.Branch_ID && <span className="text-xs text-gray-400 font-normal ml-2">{r.Branch_ID}</span>}</p>
-                          <p className="text-[11px] text-gray-400">Dibuka: {r.Opened_By || '—'}{r.Opened_At ? ' · ' + String(r.Opened_At).substring(11) : ''} · Ditutup: {r.Closed ? (r.Closed_By + ' · ' + String(r.Closed_At).substring(11)) : 'belum'}</p>
+                  {shown.map(r => { const isOpen = !!openIds[r.ID]; return (
+                    <div key={r.ID} className="bg-white border rounded-2xl px-4 py-3">
+                      <div className="flex items-center justify-between gap-2" style={{ cursor: 'pointer' }} onClick={() => toggleRow(r.ID)}>
+                        <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                          <i className={'fa-solid fa-chevron-' + (isOpen ? 'down' : 'right') + ' text-gray-400 text-[10px]'} style={{ width: 12 }}></i>
+                          <div>
+                            <p className="font-bold text-gray-800 text-sm">{r.Date}{r.Branch_ID && <span className="text-xs text-gray-400 font-normal ml-2">{r.Branch_ID}</span>}</p>
+                            <p className="text-[11px] text-gray-400">{r.Opened_By || '—'}{r.Opened_At ? ' · ' + String(r.Opened_At).substring(11) : ''} → {r.Closed ? (r.Closed_By + ' · ' + String(r.Closed_At).substring(11)) : 'belum ditutup'}</p>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        {r.Closed && <p className="text-[11px] text-gray-500" style={{ flex: 1, textAlign: 'right' }}>Seharusnya <b className="text-gray-700">{rpFmt(r.Expected_Cash)}</b> · Fisik <b className="text-gray-700">{rpFmt(r.Counted_Cash)}</b></p>}
+                        <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                           {r.Closed ? <DiffBadge diff={r.Difference} /> : <span className="text-xs font-bold px-2 py-1 rounded-lg" style={{ background: '#fffbeb', color: '#b45309' }}>Belum ditutup</span>}
                           {canDelete && r.Closed && <button onClick={() => openEdit(r)} title="Koreksi uang fisik / setoran" className="text-indigo-500 w-7 h-7"><i className="fa-solid fa-pen-to-square text-xs"></i></button>}
                           {canDelete && <button onClick={() => del(r)} title="Hapus catatan" className="text-red-400 w-7 h-7"><i className="fa-solid fa-trash-can text-xs"></i></button>}
                         </div>
                       </div>
-                      {r.Closed && (
+                      {isOpen && r.Closed && (
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-xs">
                           {[['Kas awal', r.Opening_Cash], ['Penjualan tunai', r.Cash_Sales], ...(r.Drawer_Expense > 0 ? [['Diambil dari laci', r.Drawer_Expense]] : []), ['Seharusnya', r.Expected_Cash], ['Uang fisik', r.Counted_Cash], ['Total penjualan', r.Total_Sales], ['QRIS', r.Qris_Sales], ['Disetor', r.Deposit], ['Sisa untuk besok', r.Next_Opening_Cash]].map(([a, b]) => (
                             <div key={a} className="bg-slate-50 rounded-lg px-2.5 py-2"><p className="text-gray-400">{a}</p><p className="font-bold text-gray-800">{rpFmt(b)}</p></div>
                           ))}
                         </div>
                       )}
-                      {r.Notes && <p className="text-xs text-gray-500 mt-2">Catatan tutup: {r.Notes}</p>}
-                      {r.Drawer_Expense > 0 && r.Drawer_Note && <p className="text-xs text-gray-500 mt-1">Uang laci dipakai untuk: {r.Drawer_Note}</p>}
-                      {r.Opening_Note && <p className="text-xs text-gray-400 mt-1">Catatan buka: {r.Opening_Note}</p>}
+                      {isOpen && r.Notes && <p className="text-xs text-gray-500 mt-2">Catatan tutup: {r.Notes}</p>}
+                      {isOpen && r.Drawer_Expense > 0 && r.Drawer_Note && <p className="text-xs text-gray-500 mt-1">Uang laci dipakai untuk: {r.Drawer_Note}</p>}
+                      {isOpen && r.Opening_Note && <p className="text-xs text-gray-400 mt-1">Catatan buka: {r.Opening_Note}</p>}
                     </div>
-                  ))}
+                  ); })}
                 </div>
               )}
           </div>
