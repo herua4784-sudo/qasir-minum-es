@@ -11348,7 +11348,7 @@
           {/* MODAL PEMBAYARAN */}
           {paymentModal && (
             <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-sm max-h-[90vh] overflow-y-auto">
+              <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-sm max-h-[90vh] overflow-y-auto" style={paymentMethod === 'QRIS' ? { maxWidth: 560 } : undefined}>
                 <div className="flex justify-between items-center mb-4 border-b pb-3">
                   <h3 className="font-bold text-xl text-gray-800">Pembayaran</h3>
                   <button onClick={() => setPaymentModal(false)} className="text-gray-400 hover:bg-gray-100 w-8 h-8 rounded-full"><i className="fa-solid fa-xmark"></i></button>
@@ -11387,14 +11387,14 @@
                   </div>
                 ) : (
                   <div className="text-center">
-                    <div className="bg-white border rounded-xl p-3 w-40 h-40 mx-auto flex items-center justify-center mb-2">
+                    <div className="bg-white border rounded-xl p-3 mx-auto flex items-center justify-center mb-2" style={{ width: 'min(100%, 52vh)', aspectRatio: '1 / 1' }}>
                       {settings.QRIS_Type === 'Static' && settings.QRIS_Image_URL ? (
                         <CachedImg url={settings.QRIS_Image_URL} fallbackIcon="fa-qrcode" className="w-full h-full object-contain" />
                       ) : (
-                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://minum.es/pay/preview" className="w-full h-full object-contain" />
+                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=https://minum.es/pay/preview" className="w-full h-full object-contain" />
                       )}
                     </div>
-                    <p className="text-sm font-bold text-gray-800">Total: Rp {total.toLocaleString('id-ID')}</p>
+                    <p className="text-xl font-bold text-gray-800">Total: Rp {total.toLocaleString('id-ID')}</p>
                   </div>
                 )}
 
