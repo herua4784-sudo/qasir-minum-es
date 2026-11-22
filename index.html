@@ -4740,17 +4740,17 @@
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">Stok Awal</label>
-                      <DecimalInput value={formData.Stock} onChange={v => setFormData({...formData, Stock: v})} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="0" />
+                      <DecimalInput maxDecimals={2} value={formData.Stock} onChange={v => setFormData({...formData, Stock: v})} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="0" />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">Stok Minimum</label>
-                      <DecimalInput value={formData.Min_Stock} onChange={v => setFormData({...formData, Min_Stock: v})} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Batas peringatan" />
+                      <DecimalInput maxDecimals={2} value={formData.Min_Stock} onChange={v => setFormData({...formData, Min_Stock: v})} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Batas peringatan" />
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">Harga/Satuan</label>
-                      <DecimalInput value={formData.Cost_Per_Unit} onChange={v => setFormData({...formData, Cost_Per_Unit: v})} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Rp" />
+                      <DecimalInput maxDecimals={2} value={formData.Cost_Per_Unit} onChange={v => setFormData({...formData, Cost_Per_Unit: v})} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Rp" />
                     </div>
                   </div>
 
@@ -5839,7 +5839,7 @@
               <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
                 <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide mb-1">Hasil yang Akan Didapat</p>
                 <p className="text-2xl font-black text-emerald-700">{Number(totalYield || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} {selectedOutput.Unit}</p>{gramPerBatch > 0 && <p className="text-sm font-bold text-emerald-700 mt-1">Bahan padat dipakai: {(Math.round(gramPerBatch * batchNum * 100) / 100).toLocaleString('id-ID')} gr</p>}
-                <p className="text-xs text-emerald-600 mt-1">({Number(selectedOutput.Batch_Yield || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} {selectedOutput.Unit} x {Number(batchNum).toLocaleString('id-ID', { maximumFractionDigits: 3 })} resep)</p>
+                <p className="text-xs text-emerald-600 mt-1">({Number(selectedOutput.Batch_Yield || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} {selectedOutput.Unit} x {Number(batchNum).toLocaleString('id-ID', { maximumFractionDigits: 2 })} resep)</p>
               </div>
             )}
 
@@ -6104,7 +6104,7 @@
     const fmtInt = (n) => Math.round(Number(n || 0)).toLocaleString('id-ID');
     const fmtQty = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
     // Untuk riwayat pergerakan: jumlah >= 1 dibulatkan, tapi jumlah kecil (misal 0,02 Bks teh) tetap tampil desimalnya supaya tidak terbaca "0".
-    const fmtMove = (n) => { const v = Number(n || 0); return Math.abs(v) >= 1 || v === 0 ? Math.round(v).toLocaleString('id-ID') : v.toLocaleString('id-ID', { maximumFractionDigits: 3 }); };
+    const fmtMove = (n) => { const v = Number(n || 0); return Math.abs(v) >= 1 || v === 0 ? Math.round(v).toLocaleString('id-ID') : v.toLocaleString('id-ID', { maximumFractionDigits: 2 }); };
 
     // Memantau antrian offline: begitu isinya berubah (ada yang masuk, atau selesai
     // tersinkron), panggil onChange supaya layar memuat ulang data terbaru.
@@ -10559,14 +10559,16 @@
     // dikirim lewat onChange SELALU angka JS standar (desimal titik), jadi aman
     // langsung dipakai untuk perhitungan atau disimpan ke backend — pemformatan
     // ala Indonesia ini murni untuk TAMPILAN, tidak memengaruhi cara data disimpan.
-    function DecimalInput({ value, onChange, placeholder, className, disabled, autoFocus }) {
+    function DecimalInput({ value, onChange, placeholder, className, disabled, autoFocus, maxDecimals }) {
       const [displayValue, setDisplayValue] = useState('');
       const [isFocused, setIsFocused] = useState(false);
 
       const formatForDisplay = (num) => {
         if (num === '' || num === null || num === undefined) return '';
-        const n = Number(num);
+        let n = Number(num);
         if (isNaN(n)) return '';
+        // maxDecimals: hanya TAMPILAN dipendekkan (mis. 28,864754… → 28,86); nilai tersimpan tetap utuh.
+        if (maxDecimals !== undefined) n = Math.round(n * Math.pow(10, maxDecimals)) / Math.pow(10, maxDecimals);
         const parts = n.toString().split('.');
         const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
         return parts.length > 1 ? `${intPart},${parts[1]}` : intPart;
@@ -10592,7 +10594,8 @@
         setIsFocused(true);
         // Saat fokus, tampilkan versi mentah (tanpa pemisah ribuan) biar gampang diedit.
         if (value !== '' && value !== null && value !== undefined) {
-          const n = Number(value);
+          let n = Number(value);
+          if (maxDecimals !== undefined) n = Math.round(n * Math.pow(10, maxDecimals)) / Math.pow(10, maxDecimals);
           if (!isNaN(n)) setDisplayValue(n.toString().replace('.', ','));
         }
       };
@@ -10600,8 +10603,10 @@
       const handleBlur = () => {
         setIsFocused(false);
         const num = parseToNumber(displayValue);
-        onChange(num);
-        setDisplayValue(formatForDisplay(num));
+        // Kalau pengguna tidak mengubah isinya, JANGAN timpa nilai asli (yang desimalnya panjang) dengan versi pendek.
+        const untouched = maxDecimals !== undefined && value !== '' && value !== null && value !== undefined && displayValue === (Math.round(Number(value) * Math.pow(10, maxDecimals)) / Math.pow(10, maxDecimals)).toString().replace('.', ',');
+        if (!untouched) onChange(num);
+        setDisplayValue(formatForDisplay(untouched ? value : num));
       };
 
       return (
