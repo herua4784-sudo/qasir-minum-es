@@ -5988,9 +5988,14 @@
       const [search, setSearch] = useState('');
       const branchId = branch ? branch.ID : 'BR001';
 
-      const loadData = () => {
-        setLoading(true);
-        cachedFetch('ingredients_' + branchId, () => runGoogleScript('getIngredients', branchId)).then(data => { setIngredients(data || []); setLoading(false); }).catch(() => setLoading(false));
+      const [refreshing, setRefreshing] = useState(false);
+      const [lastUpdated, setLastUpdated] = useState(null);
+      // force=true (tombol Muat Ulang): lewati cache supaya stok terbaru dari server yang tampil.
+      const loadData = (force) => {
+        if (force === true) { invalidateCache('ingredients_' + branchId); setRefreshing(true); } else setLoading(true);
+        cachedFetch('ingredients_' + branchId, () => runGoogleScript('getIngredients', branchId))
+          .then(data => { setIngredients(data || []); setLastUpdated(new Date()); setLoading(false); setRefreshing(false); })
+          .catch(() => { setLoading(false); setRefreshing(false); });
       };
       useEffect(() => { loadData(); }, [branchId]);
 
@@ -6001,9 +6006,17 @@
 
       return (
         <div className="p-6 h-full overflow-y-auto">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800">Ringkasan Stok Bahan Baku</h2>
-            <p className="text-gray-500 text-sm mt-1">Pantau ketersediaan bahan baku gerai Anda secara real-time.</p>
+          <div className="mb-6 flex items-start justify-between gap-3" style={{ flexWrap: 'wrap' }}>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-800">Ringkasan Stok Bahan Baku</h2>
+              <p className="text-gray-500 text-sm mt-1">Pantau ketersediaan bahan baku gerai Anda secara real-time.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">{refreshing ? 'Memuat...' : (lastUpdated ? 'Diperbarui ' + lastUpdated.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '')}</span>
+              <button onClick={() => loadData(true)} disabled={refreshing || loading} className="bg-white border rounded-xl px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-60 transition-colors">
+                <i className={`fa-solid fa-rotate mr-1.5 ${refreshing ? 'fa-spin' : ''}`}></i>Muat Ulang
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -6525,7 +6538,8 @@
       const notify = useNotification();
       const branchId = branch ? branch.ID : 'BR001';
 
-      const loadData = () => {
+      const loadData = (force) => {
+        if (force === true) invalidateCache('ingredients_' + branchId); // tombol Muat Ulang: lewati cache
         setLoading(true);
         setLoadError(false);
         cachedFetch('ingredients_' + branchId, () => runGoogleScript('getIngredients', branchId)).then(data => {
@@ -6599,9 +6613,14 @@
       return (
         <div className="p-6 h-full overflow-y-auto">
           <div className="max-w-lg mx-auto">
-            <div className="mb-6">
+            <div className="mb-6 flex items-start justify-between gap-3">
+              <div>
               <h2 className="text-2xl font-bold text-gray-800">Barang Masuk</h2>
               <p className="text-gray-500 text-sm mt-1">Catat <b>barang yang datang atau diambil dari gudang</b> ke outlet ini. Untuk barang yang dibuang, rusak, tumpah, atau koreksi stok, pakai menu <b>Koreksi Stok &amp; Stok Terbuang</b>.</p>
+              </div>
+              <button type="button" onClick={() => loadData(true)} disabled={loading} className="bg-white border rounded-xl px-3 py-2 text-xs font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-60 transition-colors" style={{ flexShrink: 0 }}>
+                <i className={`fa-solid fa-rotate mr-1.5 ${loading ? 'fa-spin' : ''}`}></i>Muat Ulang
+              </button>
             </div>
 
             {loading ? (
@@ -6768,10 +6787,15 @@
 
       return (
         <div className="p-6 max-w-xl">
-          <div className="mb-6">
+          <div className="mb-6 flex items-start justify-between gap-3">
+          <div>
             <h2 className="text-2xl font-bold text-gray-800">{wasteOnly ? 'Stok Terbuang' : 'Koreksi Stok & Stok Terbuang'}</h2>
             {wasteOnly && <p className="text-gray-500 text-sm mt-1">Catat barang yang <b>dibuang, rusak, atau tumpah</b> (misal sisa teh yang dibuang). Ukur dulu jumlahnya, lalu isi di sini. Barang yang datang dicatat di tab Barang Masuk.</p>}
             {!wasteOnly && <p className="text-gray-500 text-sm mt-1">Gunakan untuk <b>barang yang dibuang, rusak, atau tumpah</b> (pilih Stok Keluar), dan untuk <b>mengoreksi stok</b> yang selisih dengan hitungan di outlet. Barang yang datang atau diambil dari gudang dicatat di menu <b>Barang Masuk</b>. Pengurangan stok dari penjualan tercatat otomatis, tidak perlu diinput di sini.</p>}
+          </div>
+          <button type="button" onClick={() => loadData(true)} disabled={loading} className="bg-white border rounded-xl px-3 py-2 text-xs font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-60 transition-colors" style={{ flexShrink: 0 }}>
+                <i className={`fa-solid fa-rotate mr-1.5 ${loading ? 'fa-spin' : ''}`}></i>Muat Ulang
+              </button>
           </div>
 
           {loadError ? (
