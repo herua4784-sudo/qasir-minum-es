@@ -6903,7 +6903,8 @@
       const [filterType, setFilterType] = useState('Semua');
       const branchId = branch ? branch.ID : 'BR001';
 
-      const loadData = () => {
+      const loadData = (force) => {
+        if (force === true) invalidateCache('ingredients_' + branchId); // tombol Muat Ulang: lewati cache
         setLoading(true);
         Promise.all([runGoogleScript('getStockMovements', branchId), cachedFetch('ingredients_' + branchId, () => runGoogleScript('getIngredients', branchId))])
           .then(([mv, ing]) => { setMovements(mv || []); setIngredients(ing || []); setLoading(false); })
@@ -6922,10 +6923,15 @@
               <h2 className="text-2xl font-bold text-gray-800">Riwayat Pergerakan Stok</h2>
               <p className="text-gray-500 text-sm mt-1">Semua catatan stok masuk dan keluar, termasuk pengurangan otomatis dari penjualan.</p>
             </div>
+            <div className="flex items-center gap-2">
+            <button type="button" onClick={() => loadData(true)} disabled={loading} className="bg-white border rounded-xl px-3 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-60 transition-colors">
+              <i className={`fa-solid fa-rotate mr-1.5 ${loading ? 'fa-spin' : ''}`}></i>Muat Ulang
+            </button>
             <div className="bg-white rounded-xl shadow-sm border p-1 flex">
               {['Semua', 'Masuk', 'Keluar'].map(t => (
                 <button key={t} onClick={() => setFilterType(t)} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${filterType === t ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}>{t}</button>
               ))}
+            </div>
             </div>
           </div>
 
